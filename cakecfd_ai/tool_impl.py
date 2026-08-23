@@ -154,7 +154,7 @@ def run_solver(case_dir: str, solver: str = "simpleFoam",
         result = subprocess.run(["bash", "-c", full_cmd], capture_output=True, text=True, cwd=case_dir)
         pid = result.stdout.strip()
         if pid.isdigit():
-            (Path(case_dir) / ".solver_pid").write_text(pid)
+            (Path(case_dir) / ".solver_pid").write_text(pid, encoding="utf-8")
             return {"started": True, "pid": int(pid), "log": log_name,
                     "note": "Solver running in background. Use monitor_solver to track progress."}
         return {"error": "Failed to start background solver", "output": result.stdout + result.stderr}
@@ -396,7 +396,7 @@ def _write_boundary_data(case_dir: str, patch: str, field: str,
         + "".join(f"  ({p[0]} {p[1]} {p[2]})\n" for p in points)
         + ")\n"
     )
-    (base / "points").write_text(pts_text)
+    (base / "points").write_text(pts_text, encoding="utf-8")
 
     cls   = "vectorField" if components == 3 else "scalarField"
     fname = "U" if components == 3 else "p"
@@ -414,7 +414,7 @@ def _write_boundary_data(case_dir: str, patch: str, field: str,
             else:
                 lines += f"  {vals[i] if i < len(vals) else 0.0}\n"
         lines += ")\n"
-        (tdir / fname).write_text(lines)
+        (tdir / fname).write_text(lines, encoding="utf-8")
 
     return {"written": str(base), "n_points": n, "n_times": len(times)}
 
@@ -714,7 +714,7 @@ def setup_domain(case_dir: str, stl_name: str,
             f"    outlet {{ type patch;    faces ( {outlet_face} ); }}\n"
             f"    sides  {{ type symmetry; faces ( {side_faces} ); }}\n"
             ");\n")
-    (sys_dir / "blockMeshDict").write_text(bmd)
+    (sys_dir / "blockMeshDict").write_text(bmd, encoding="utf-8")
 
     # surfaceFeatureExtractDict
     sfed = foam_header("dictionary", "surfaceFeatureExtractDict")
@@ -722,7 +722,7 @@ def setup_domain(case_dir: str, stl_name: str,
              f"    extractionMethod  extractFromSurface;\n"
              f"    extractFromSurfaceCoeffs {{ includedAngle 150; }}\n"
              f"    writeObj  yes;\n}}\n")
-    (sys_dir / "surfaceFeatureExtractDict").write_text(sfed)
+    (sys_dir / "surfaceFeatureExtractDict").write_text(sfed, encoding="utf-8")
 
     # snappyHexMeshDict
     # locationInMesh: 8% inside domain from inlet face, outside geometry
@@ -781,7 +781,7 @@ def setup_domain(case_dir: str, stl_name: str,
         f"    relaxed {{ maxNonOrtho 75; }}\n}}\n\n"
         f"debug 0;\nmergeTolerance 1e-6;\n"
     )
-    (sys_dir / "snappyHexMeshDict").write_text(shmd)
+    (sys_dir / "snappyHexMeshDict").write_text(shmd, encoding="utf-8")
 
     return {
         "geometry":    geo_name,
@@ -923,7 +923,7 @@ def write_solver_setup(case_dir: str, case_name: str,
         "snGradSchemes     { default corrected; }\n\n"
         "fluxRequired      { default no; p; }\n\n"
         "wallDist          { method meshWave; }\n"
-    )
+    , encoding="utf-8")
 
     # fvSolution
     sol = (fh("dictionary", "fvSolution") +
@@ -943,7 +943,7 @@ def write_solver_setup(case_dir: str, case_name: str,
     else:
         sol += ("PIMPLE\n{\n    nOuterCorrectors 2;\n    nCorrectors 2;\n"
                 "    nNonOrthogonalCorrectors 1;\n}\n")
-    (sys_dir / "fvSolution").write_text(sol)
+    (sys_dir / "fvSolution").write_text(sol, encoding="utf-8")
 
     # controlDict
     _rho_val = _read_of_value(sys_dir / "cakeProperties", "rho")
@@ -963,13 +963,13 @@ def write_solver_setup(case_dir: str, case_name: str,
         f"        rhoInf          {_rho};\n        CofR            (0 0 0);\n"
         f"        writeControl    timeStep;\n        writeInterval   10;\n"
         f"    }}\n}}\n"
-    )
+    , encoding="utf-8")
 
     # decomposeParDict
     (sys_dir / "decomposeParDict").write_text(
         fh("dictionary", "decomposeParDict") +
         f"numberOfSubdomains {n_cores};\nmethod scotch;\n"
-    )
+    , encoding="utf-8")
 
     # BC helper
     def bc(patch, kind, val=None):
@@ -995,7 +995,7 @@ def write_solver_setup(case_dir: str, case_name: str,
         f"dimensions [0 1 -1 0 0 0 0];\n"
         f"internalField uniform {u_vec};\n"
         f"boundaryField\n{{\n{u_bcs}}}\n"
-    )
+    , encoding="utf-8")
 
     # 0/p
     p_bcs = (f"    inlet  {{ type zeroGradient; }}\n"
@@ -1007,7 +1007,7 @@ def write_solver_setup(case_dir: str, case_name: str,
         "dimensions [0 2 -2 0 0 0 0];\n"
         "internalField uniform 0;\n"
         f"boundaryField\n{{\n{p_bcs}}}\n"
-    )
+    , encoding="utf-8")
 
     turb_lower = turbulence.lower()
     written = ["system/fvSchemes", "system/fvSolution", "system/controlDict",
@@ -1023,7 +1023,7 @@ def write_solver_setup(case_dir: str, case_name: str,
             "dimensions [0 2 -2 0 0 0 0];\n"
             f"internalField uniform {k_val:.6g};\n"
             f"boundaryField\n{{\n{k_bcs}}}\n"
-        )
+        , encoding="utf-8")
         written.append("0/k")
 
     if turb_lower == "komegasst":
@@ -1036,7 +1036,7 @@ def write_solver_setup(case_dir: str, case_name: str,
             "dimensions [0 0 -1 0 0 0 0];\n"
             f"internalField uniform {omega_val:.6g};\n"
             f"boundaryField\n{{\n{o_bcs}}}\n"
-        )
+        , encoding="utf-8")
         written.append("0/omega")
 
     if turb_lower == "kepsilon":
@@ -1050,7 +1050,7 @@ def write_solver_setup(case_dir: str, case_name: str,
             "dimensions [0 2 -3 0 0 0 0];\n"
             f"internalField uniform {eps:.6g};\n"
             f"boundaryField\n{{\n{e_bcs}}}\n"
-        )
+        , encoding="utf-8")
         written.append("0/epsilon")
 
     if turb_lower == "spalartallmaras":
@@ -1064,7 +1064,7 @@ def write_solver_setup(case_dir: str, case_name: str,
             "dimensions [0 2 -1 0 0 0 0];\n"
             f"internalField uniform {nt:.6g};\n"
             f"boundaryField\n{{\n{nt_bcs}}}\n"
-        )
+        , encoding="utf-8")
         written.append("0/nuTilda")
 
     if turb_lower != "laminar":
@@ -1077,14 +1077,14 @@ def write_solver_setup(case_dir: str, case_name: str,
             "dimensions [0 2 -1 0 0 0 0];\n"
             f"internalField uniform {nut_val:.6g};\n"
             f"boundaryField\n{{\n{nt_bcs2}}}\n"
-        )
+        , encoding="utf-8")
         written.append("0/nut")
 
     # constant/ dicts
     (const_dir / "transportProperties").write_text(
         fh("dictionary", "transportProperties") +
         f"transportModel Newtonian;\nnu             {nu};\n"
-    )
+    , encoding="utf-8")
     laminar = turb_lower == "laminar"
     turb_model_name = {
         "komegasst": "kOmegaSST", "kepsilon": "kEpsilon",
@@ -1095,13 +1095,13 @@ def write_solver_setup(case_dir: str, case_name: str,
           f"simulationType {_sim_type};\n")
     if not laminar:
         tp += f"RAS\n{{\n    RASModel     {turb_model_name};\n    turbulence   on;\n    printCoeffs  on;\n}}\n"
-    (const_dir / "turbulenceProperties").write_text(tp)
+    (const_dir / "turbulenceProperties").write_text(tp, encoding="utf-8")
     # Also write momentumTransport (OF 2412 canonical name) so it doesn't inherit a stale LES file
     mt = (fh("dictionary", "momentumTransport") +
           f"simulationType {_sim_type};\n")
     if not laminar:
         mt += f"RAS\n{{\n    model        {turb_model_name};\n    turbulence   on;\n    printCoeffs  on;\n}}\n"
-    (const_dir / "momentumTransport").write_text(mt)
+    (const_dir / "momentumTransport").write_text(mt, encoding="utf-8")
     written += ["constant/transportProperties", "constant/turbulenceProperties", "constant/momentumTransport"]
 
     return {
@@ -1245,7 +1245,7 @@ def export_results(case_dir: str, output_dir: str,
         if not res_rows:
             warnings.append("No residual data found: residuals.csv not written")
         else:
-            with p.open("w") as f:
+            with p.open("w", encoding="utf-8") as f:
                 f.write("step,time," + ",".join(field_names) + "\n")
                 for r in res_rows:
                     vals = ",".join(f"{r.get(k, ''):.6e}" if isinstance(r.get(k), float)
@@ -1259,7 +1259,7 @@ def export_results(case_dir: str, output_dir: str,
         if not force_rows:
             warnings.append("No forces postProcessing data found: forces.csv not written")
         else:
-            with p.open("w") as f:
+            with p.open("w", encoding="utf-8") as f:
                 f.write("time,Fx,Fy,Fz,Fx_pressure,Fy_pressure,Fz_pressure,"
                         "Fx_viscous,Fy_viscous,Fz_viscous,"
                         "Mx,My,Mz,Mx_pressure,My_pressure,Mz_pressure\n")
@@ -1300,7 +1300,7 @@ def export_results(case_dir: str, output_dir: str,
     if report:
         p = out / "report.md"
         case_name = root.name
-        with p.open("w") as f:
+        with p.open("w", encoding="utf-8") as f:
             f.write(f"# Cake Studio - Simulation Report\n\n")
             f.write(f"| | |\n|---|---|\n")
             f.write(f"| **Case** | {case_name} |\n")
@@ -1400,7 +1400,7 @@ def export_results(case_dir: str, output_dir: str,
         if force_rows:
             fr = force_rows[-1]
             obj["forces_latest"] = {k: fr[k] for k in ("time","Fx","Fy","Fz","Mx","My","Mz")}
-        p.write_text(json.dumps(obj, indent=2))
+        p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
         written.append(str(p))
 
     return {
@@ -1648,7 +1648,7 @@ def patch_inlet_bc(case_dir: str, patch: str, fields: list | None = None) -> dic
             errors.append(f"Could not find patch '{patch}' block in 0/{field}")
             continue
 
-        bc_file.write_text(new_text)
+        bc_file.write_text(new_text, encoding="utf-8")
         patched.append(f"0/{field}")
 
     # Verify boundaryData directory exists
@@ -1878,7 +1878,7 @@ def generate_report(case_dir: str, output_dir: str | None = None,
     # Write report.md
     report_path = out / "report.md"
     case_name = root.name
-    with report_path.open("w") as f:
+    with report_path.open("w", encoding="utf-8") as f:
         f.write(f"# {title or 'Cake Studio - Simulation Report'}\n\n")
         f.write(f"| | |\n|---|---|\n")
         f.write(f"| **Case** | {case_name} |\n")
@@ -1940,7 +1940,7 @@ def generate_report(case_dir: str, output_dir: str | None = None,
 
     # Write citations.bib
     bib_path = out / "citations.bib"
-    with bib_path.open("w") as f:
+    with bib_path.open("w", encoding="utf-8") as f:
         f.write("% Cake Studio: auto-generated citations\n\n")
         for key in cite_keys:
             c = _CITATIONS.get(key)

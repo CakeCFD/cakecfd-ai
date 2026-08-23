@@ -76,6 +76,11 @@ pip install -e ".[dev]"
 
 ## Usage
 
+An Anthropic API key is optional. It is required only for the REPL and the
+Python agent, where Claude decides which tools to call. Every tool can also be
+invoked directly from the command line with no key and no network access, as
+shown under Direct tool mode below.
+
 Python API:
 
 ```python
