@@ -71,6 +71,18 @@ apt install path:
 export OF_BASHRC=/path/to/openfoam2412/etc/bashrc
 ```
 
+This build expects OpenMPI on `PATH` (even serial runs touch `Pstream`). The
+apt install pulls it in automatically; if you used the `cake-openFOAM-lib`
+mirror instead, it does not include MPI, so grab the bundled runtime from the
+same release and source it after `OF_BASHRC`:
+
+```bash
+curl -L -o mpi.tar.gz \
+    https://github.com/CakeCFD/cake-openFOAM-lib/releases/download/v2412/mpi-openmpi-2412-linux-x86_64.tar.gz
+tar -xzf mpi.tar.gz -C /opt
+source /opt/mpi-openmpi-2412-linux-x86_64/activate.sh
+```
+
 The `teno`/`teno6` schemes in `write_solver_setup` additionally need
 `libtenoScheme.so`, CakeCFD's own scheme library, in `FOAM_USER_LIBBIN`. Build
 it from [CakeCFD/cake-studio](https://github.com/CakeCFD/cake-studio)'s

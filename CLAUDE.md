@@ -46,15 +46,32 @@ Then point `run_solver`/`build.sh` at it via `OF_BASHRC=/opt/openfoam2412/etc/ba
 (see `tool_impl.py`'s `OF_BASHRC`). Do not substitute any other GitHub source
 for OpenFOAM: `github.com/OpenFOAM` is the OpenFOAM **Foundation** fork, an
 incompatible distribution with a different version scheme (no `2412` release
-exists there) — only `CakeCFD/cake-openFOAM-lib` mirrors the ESI/OpenCFD `2412`
+exists there): only `CakeCFD/cake-openFOAM-lib` mirrors the ESI/OpenCFD `2412`
 this project actually targets.
+
+**MPI**: this build is `WM_MPLIB=SYSTEMOPENMPI`, meaning it expects OpenMPI on
+`PATH`/`LD_LIBRARY_PATH`. Even a plain serial `simpleFoam` run touches
+`Pstream`, which needs it. The apt install above pulls OpenMPI in as a
+dependency automatically; the `cake-openFOAM-lib` mirror does not, since it
+only tars the OpenFOAM tree. If `mpirun`/`libmpi.so.40` are not already
+present in this environment, get the bundled runtime from the same release:
+
+```bash
+curl -L -o mpi.tar.gz \
+    https://github.com/CakeCFD/cake-openFOAM-lib/releases/download/v2412/mpi-openmpi-2412-linux-x86_64.tar.gz
+tar -xzf mpi.tar.gz -C /opt
+source /opt/mpi-openmpi-2412-linux-x86_64/activate.sh
+```
+
+Source this *after* the OpenFOAM `bashrc`, not before. It only adds `mpirun`
+and its libraries to the environment; it does not set any OpenFOAM variable.
 
 ## Installing the TENO scheme library
 
 `write_solver_setup`'s `teno`/`teno6` div schemes need `libtenoScheme.so` in
 `FOAM_USER_LIBBIN`, or the solver run fails at runtime with an unknown-scheme
 error even though the tool call itself succeeds. It is not part of stock
-OpenFOAM — it is CakeCFD's own code, built from `src/solver/schemes/TENO` in
+OpenFOAM: it is CakeCFD's own code, built from `src/solver/schemes/TENO` in
 [CakeCFD/cake-studio](https://github.com/CakeCFD/cake-studio) via that repo's
 `./build.sh`.
 
@@ -67,7 +84,7 @@ curl -L -o libtenoScheme.so \
 cp libtenoScheme.so "$FOAM_USER_LIBBIN/"
 ```
 
-This build is linux64GccDPInt32Opt against OpenFOAM 2412 specifically — if
+This build is linux64GccDPInt32Opt against OpenFOAM 2412 specifically. If
 your OpenFOAM build differs (different compiler, WM_LABEL_SIZE, precision),
 build from source instead of using this binary; an ABI-mismatched
 `libtenoScheme.so` will not load, again with an error only visible in the
