@@ -71,6 +71,18 @@ apt install path:
 export OF_BASHRC=/path/to/openfoam2412/etc/bashrc
 ```
 
+The `teno`/`teno6` schemes in `write_solver_setup` additionally need
+`libtenoScheme.so`, CakeCFD's own scheme library, in `FOAM_USER_LIBBIN`. Build
+it from [CakeCFD/cake-studio](https://github.com/CakeCFD/cake-studio)'s
+`./build.sh`, or download the prebuilt library (linux64GccDPInt32Opt,
+OpenFOAM 2412):
+
+```bash
+curl -L -o libtenoScheme.so \
+    https://github.com/CakeCFD/cakecfd-ai/releases/download/teno-2412/libtenoScheme-2412-linux-x86_64.so
+cp libtenoScheme.so "$FOAM_USER_LIBBIN/"
+```
+
 ## Installation
 
 ```bash

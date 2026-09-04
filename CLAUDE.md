@@ -49,6 +49,30 @@ incompatible distribution with a different version scheme (no `2412` release
 exists there) — only `CakeCFD/cake-openFOAM-lib` mirrors the ESI/OpenCFD `2412`
 this project actually targets.
 
+## Installing the TENO scheme library
+
+`write_solver_setup`'s `teno`/`teno6` div schemes need `libtenoScheme.so` in
+`FOAM_USER_LIBBIN`, or the solver run fails at runtime with an unknown-scheme
+error even though the tool call itself succeeds. It is not part of stock
+OpenFOAM — it is CakeCFD's own code, built from `src/solver/schemes/TENO` in
+[CakeCFD/cake-studio](https://github.com/CakeCFD/cake-studio) via that repo's
+`./build.sh`.
+
+If you cannot build it in this environment (no C++ toolchain, no OpenFOAM
+headers, etc.), download the prebuilt library instead:
+
+```bash
+curl -L -o libtenoScheme.so \
+    https://github.com/CakeCFD/cakecfd-ai/releases/download/teno-2412/libtenoScheme-2412-linux-x86_64.so
+cp libtenoScheme.so "$FOAM_USER_LIBBIN/"
+```
+
+This build is linux64GccDPInt32Opt against OpenFOAM 2412 specifically — if
+your OpenFOAM build differs (different compiler, WM_LABEL_SIZE, precision),
+build from source instead of using this binary; an ABI-mismatched
+`libtenoScheme.so` will not load, again with an error only visible in the
+solver log at run time, not at write_solver_setup time.
+
 ## Things that are easy to get wrong here
 
 - Never wrap `os.environ["ANTHROPIC_API_KEY"]` in try/except or a friendly
