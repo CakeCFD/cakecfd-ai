@@ -46,7 +46,7 @@ _msg = "\n".join([
     _p(_WH, "  • the sphere demo converged at Cd=0.42 on the first try."),
     _p(_WH, "    that almost never happens. the mesh was good."),
     _p(_WH, "  • TENO5 took 3 sessions to get right. the outerProduct"),
-    _p(_WH, "    error for symmTensor was genuinely annoying."),
+    _p(_WH, "    error for symmTensor was really annoying."),
     _p(_WH, "  • the user's PC sounded like a datacenter the whole time."),
     _p(_WH, "    it held up fine."),
     "",

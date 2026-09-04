@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cakecfd_ai"
-version = "0.1.0"
+version = "0.1.1"
 description = "Claude AI integration for Cake CFD - run simulations via natural language"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
