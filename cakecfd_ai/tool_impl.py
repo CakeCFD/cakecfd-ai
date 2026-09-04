@@ -34,7 +34,7 @@ import math
 from . import report_generator
 
 
-OF_BASHRC = "/usr/lib/openfoam/openfoam2412/etc/bashrc"
+OF_BASHRC = os.environ.get("OF_BASHRC", "/usr/lib/openfoam/openfoam2412/etc/bashrc")
 
 
 # report helpers

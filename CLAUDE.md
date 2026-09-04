@@ -28,8 +28,26 @@ sudo apt-get install -y openfoam2412-default
 source /usr/lib/openfoam/openfoam2412/etc/bashrc
 ```
 
-Do not fetch OpenFOAM source or tarballs from GitHub. The apt repo above is
-the supported path, matching the sibling `CFD_development` (CakeCFD GUI) repo.
+The apt repo above is the primary supported path, matching the sibling
+`CFD_development` (CakeCFD GUI) repo. If `openfoam.com`/`dl.openfoam.com` is
+unreachable from this environment (this happens in some Claude sessions
+without full network access), download the same release instead from
+[CakeCFD/cake-openFOAM-lib](https://github.com/CakeCFD/cake-openFOAM-lib), an official
+GitHub-hosted mirror maintained for exactly this case:
+
+```bash
+curl -L -o openfoam2412.tar.gz \
+    https://github.com/CakeCFD/cake-openFOAM-lib/releases/download/v2412/openfoam2412-linux-x86_64.tar.gz
+tar -xzf openfoam2412.tar.gz -C /opt
+source /opt/openfoam2412/etc/bashrc
+```
+
+Then point `run_solver`/`build.sh` at it via `OF_BASHRC=/opt/openfoam2412/etc/bashrc`
+(see `tool_impl.py`'s `OF_BASHRC`). Do not substitute any other GitHub source
+for OpenFOAM: `github.com/OpenFOAM` is the OpenFOAM **Foundation** fork, an
+incompatible distribution with a different version scheme (no `2412` release
+exists there) — only `CakeCFD/cake-openFOAM-lib` mirrors the ESI/OpenCFD `2412`
+this project actually targets.
 
 ## Things that are easy to get wrong here
 

@@ -60,6 +60,17 @@ Minimum specifications for solver runs:
 | OpenFOAM 2412 | On WSL2 Ubuntu 24.04, for the `run_solver` tool |
 | CakeCFD binary | Optional. Geometry tools use the CakeCFD C++ library. |
 
+Install OpenFOAM 2412 from [openfoam.com](https://www.openfoam.com/download).
+If that domain is not reachable from your environment, a GitHub-hosted mirror
+of the same release is available at
+[CakeCFD/cake-openFOAM-lib](https://github.com/CakeCFD/cake-openFOAM-lib). Either way,
+point `OF_BASHRC` at the resulting `etc/bashrc` if it is not at the default
+apt install path:
+
+```bash
+export OF_BASHRC=/path/to/openfoam2412/etc/bashrc
+```
+
 ## Installation
 
 ```bash
