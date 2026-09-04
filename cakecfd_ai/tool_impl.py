@@ -792,6 +792,62 @@ def setup_domain(case_dir: str, stl_name: str,
     )
     (sys_dir / "snappyHexMeshDict").write_text(shmd, encoding="utf-8")
 
+    # surfaceFeatureExtract/blockMesh/snappyHexMesh all need controlDict,
+    # fvSchemes and fvSolution just to construct their Time/fvMesh objects,
+    # even though those files are otherwise write_solver_setup()'s job.
+    # Stub minimal versions here so run_mesh_pipeline() doesn't die before
+    # write_solver_setup() ever runs; only write if absent so a case that
+    # already has real solver config (write_solver_setup already ran, or
+    # setup_domain is being re-run to tweak the mesh) is never clobbered.
+    control_dict_path = sys_dir / "controlDict"
+    if not control_dict_path.is_file():
+        control_dict_path.write_text(
+            foam_header("dictionary", "controlDict") +
+            "application     simpleFoam;\n"
+            "startFrom       startTime;\n"
+            "startTime       0;\n"
+            "stopAt          endTime;\n"
+            "endTime         1;\n"
+            "deltaT          1;\n"
+            "writeControl    timeStep;\n"
+            "writeInterval   1;\n"
+            "purgeWrite      0;\n"
+            "writeFormat     ascii;\n"
+            "writePrecision  6;\n"
+            "writeCompression off;\n"
+            "timeFormat      general;\n"
+            "timePrecision   6;\n"
+            "runTimeModifiable true;\n",
+            encoding="utf-8",
+        )
+
+    fv_schemes_path = sys_dir / "fvSchemes"
+    if not fv_schemes_path.is_file():
+        fv_schemes_path.write_text(
+            foam_header("dictionary", "fvSchemes") +
+            "ddtSchemes { default steadyState; }\n"
+            "gradSchemes { default Gauss linear; }\n"
+            "divSchemes { default none; }\n"
+            "laplacianSchemes { default Gauss linear corrected; }\n"
+            "interpolationSchemes { default linear; }\n"
+            "snGradSchemes { default corrected; }\n"
+            "wallDist { method meshWave; }\n",
+            encoding="utf-8",
+        )
+
+    fv_solution_path = sys_dir / "fvSolution"
+    if not fv_solution_path.is_file():
+        fv_solution_path.write_text(
+            foam_header("dictionary", "fvSolution") +
+            "solvers\n{\n"
+            "    p { solver GAMG; tolerance 1e-06; relTol 0.1; smoother GaussSeidel; }\n"
+            "    U { solver smoothSolver; smoother GaussSeidel; tolerance 1e-08; relTol 0.1; }\n"
+            "}\n"
+            "SIMPLE { nNonOrthogonalCorrectors 0; }\n"
+            "relaxationFactors { fields { p 0.3; } equations { U 0.7; } }\n",
+            encoding="utf-8",
+        )
+
     return {
         "geometry":    geo_name,
         "Lc":          round(Lc, 4),
@@ -806,7 +862,10 @@ def setup_domain(case_dir: str, stl_name: str,
         "refinement":  {"surface": f"{surf_min}-{surf_max}", "region": ref_region},
         "files":       ["system/blockMeshDict",
                         "system/snappyHexMeshDict",
-                        "system/surfaceFeatureExtractDict"],
+                        "system/surfaceFeatureExtractDict",
+                        "system/controlDict (stub, overwritten by write_solver_setup)",
+                        "system/fvSchemes (stub, overwritten by write_solver_setup)",
+                        "system/fvSolution (stub, overwritten by write_solver_setup)"],
         "next_steps":  ["surfaceFeatureExtract", "blockMesh", "snappyHexMesh"],
     }
 
