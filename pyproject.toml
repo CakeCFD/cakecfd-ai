@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cakecfd_ai"
-version = "0.1.8"
+version = "0.1.9"
 description = "Claude AI integration for Cake CFD - run simulations via natural language"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -19,3 +19,10 @@ cakecfd = "cakecfd_ai.cli:main"
 
 [project.urls]
 Repository = "https://github.com/CakeCFD/cakecfd-ai"
+
+[tool.setuptools.package-data]
+# MANIFEST.in's "include CLAUDE.md" only reaches the sdist; pip installs from
+# the wheel by default, and a wheel only ships files declared here, so a copy
+# has to live inside the package itself (cakecfd_ai/CLAUDE.md) to actually
+# reach a `pip install`.
+cakecfd_ai = ["CLAUDE.md"]

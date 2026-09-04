@@ -11,6 +11,14 @@ Tools may also be called directly from the command line without an API key,
 which allows an agent that already has terminal access to drive CakeCFD without
 routing through the Anthropic API.
 
+> If you are Claude working in this repository, or in a project that has
+> installed `cakecfd_ai` as a dependency, read `CLAUDE.md` first. It has
+> the OpenFOAM/MPI/TENO setup steps and repository-specific notes this
+> README does not repeat. A copy ships inside the installed package at
+> `cakecfd_ai/CLAUDE.md` (`python -c "import cakecfd_ai, pathlib;
+> print(pathlib.Path(cakecfd_ai.__file__).parent / 'CLAUDE.md')"`), so it is
+> available even without cloning the repository.
+
 ## Copyright
 
 cakecfd-ai is free software: you can redistribute it and/or modify it under the
