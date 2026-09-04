@@ -253,7 +253,7 @@ def _write_report(case: Path, s: dict):
         f"**Case:** `{s['case']}`  ",
         f"**Date:** {s['date']}  ",
         f"**Solver:** {s['solver']}  ",
-        f"**Status:** {'✓ Converged' if s['converged'] else '✗ Did not converge'}",
+        f"**Status:** {'Converged' if s['converged'] else 'Did not converge'}",
         f"",
     ]
 
@@ -284,7 +284,7 @@ def _write_report(case: Path, s: dict):
             "|-------|---------------|-----------|",
         ]
         for field, info in s["residuals"].items():
-            conv = "✓" if info["final"] < 1e-4 else "✗"
+            conv = "Yes" if info["final"] < 1e-3 else "No"
             lines.append(f"| {field} | {info['final']:.2e} | {conv} |")
         lines.append("")
 
