@@ -29,10 +29,31 @@ from datetime import date
 from pathlib import Path
 
 
+# Density-based (compressible) solvers use thermophysicalProperties + gamma/p/T
+# instead of transportProperties + nu, so their config table needs different
+# fields. rhoCentralFoam is additionally explicit/diagonal: it does not run a
+# linear solver per field, so it never prints "Solving for X, Final residual =
+# ..." lines and has no residual-based convergence criterion at all — the only
+# way to judge it is whether it ran to the requested end time.
+COMPRESSIBLE_SOLVERS = {
+    "rhoSimpleFoam", "rhoPimpleFoam", "rhoCentralFoam",
+    "buoyantSimpleFoam", "buoyantPimpleFoam",
+}
+DIAGONAL_SOLVERS = {"rhoCentralFoam"}
+
+
 # known citations with DOIs
 
 CITATIONS = {
     "teno5": {
+        "authors": "Fu, L., Hu, X.Y., Adams, N.A.",
+        "year": 2016,
+        "title": "A family of high-order targeted ENO schemes for compressible-fluid simulations",
+        "journal": "Journal of Computational Physics",
+        "volume": "305", "pages": "333-359",
+        "doi": "10.1016/j.jcp.2015.10.037",
+    },
+    "teno6": {
         "authors": "Fu, L., Hu, X.Y., Adams, N.A.",
         "year": 2016,
         "title": "A family of high-order targeted ENO schemes for compressible-fluid simulations",
@@ -82,6 +103,15 @@ def _read_dict_value(path: Path, key: str) -> str:
         return ""
     text = path.read_text(errors="replace")
     m = re.search(rf"{re.escape(key)}\s+([^\s;]+)\s*;", text)
+    return m.group(1) if m else ""
+
+
+def _read_uniform_scalar(path: Path) -> str:
+    """Read a scalar field file's internalField, e.g. 0/p or 0/T."""
+    if not path.exists():
+        return ""
+    text = path.read_text(errors="replace")
+    m = re.search(r"internalField\s+uniform\s+([\d.eE+\-]+)\s*;", text)
     return m.group(1) if m else ""
 
 
@@ -140,14 +170,34 @@ def _read_forces(case: Path) -> dict:
     return {}
 
 
+def _read_div_scheme(case: Path) -> tuple[str, str | None]:
+    """
+    Read the div(phi,U) convection scheme from fvSchemes.
+    Returns (display_label, citation_key). citation_key is None for schemes
+    with no dedicated citation (e.g. linearUpwind).
+    """
+    schemes = case / "system" / "fvSchemes"
+    if not schemes.exists():
+        return "unknown", None
+    m = re.search(r"div\(phi,U\)\s+Gauss\s+(\w+)", schemes.read_text(errors="replace"))
+    if not m:
+        return "unknown", None
+    s = m.group(1)
+    if s == "teno":
+        return "TENO5 (CakeCFD)", "teno5"
+    if s == "teno6":
+        return "TENO6 (CakeCFD)", "teno6"
+    return s, None
+
+
 def _detect_citations(case: Path) -> list[str]:
     keys = ["openfoam"]
-    schemes = (case / "system" / "fvSchemes")
     turb = (case / "constant" / "momentumTransport")
     turb2 = (case / "constant" / "turbulenceProperties")
 
-    if schemes.exists() and "TENO5" in schemes.read_text(errors="replace"):
-        keys.append("teno5")
+    _, scheme_cite = _read_div_scheme(case)
+    if scheme_cite:
+        keys.append(scheme_cite)
     for tf in (turb, turb2):
         if tf.exists():
             txt = tf.read_text(errors="replace")
@@ -170,27 +220,23 @@ def _detect_citations(case: Path) -> list[str]:
 # main entry point
 
 def generate(case_dir: str, solver: str = "simpleFoam",
-             converged: bool = False, exit_code: int = 0) -> dict:
+             converged: bool = False, exit_code: int = 0,
+             completed: bool | None = None) -> dict:
     """
     Generate report.md and results_summary.json in the case directory.
     Returns the summary dict (same content as the JSON).
+
+    completed: whether the solver actually ran to its end condition, as
+    distinct from `converged` (met a residual criterion) and from exit_code
+    (some solvers crash during post-run cleanup after finishing correctly).
+    Defaults to exit_code == 0 for callers that don't track it separately.
     """
     case = Path(case_dir)
     case_name = case.name
-
-    # gather inputs
-    nu_str   = _read_dict_value(case / "constant" / "transportProperties", "nu") or \
-               _read_dict_value(case / "constant" / "physicalProperties", "nu") or "unknown"
-    turb_model = _read_dict_value(case / "constant" / "momentumTransport", "model") or \
-                 _read_dict_value(case / "constant" / "turbulenceProperties", "model") or "unknown"
-    U = _read_inlet_velocity(case)
-    U_mag = (U[0]**2 + U[1]**2 + U[2]**2) ** 0.5
-
-    try:
-        nu_val = float(nu_str)
-        re_val = round(U_mag / nu_val, 0) if nu_val > 0 else None
-    except Exception:
-        re_val = None
+    compressible = solver in COMPRESSIBLE_SOLVERS
+    diagonal = solver in DIAGONAL_SOLVERS
+    if completed is None:
+        completed = exit_code == 0
 
     mesh_cells = None
     check_log = case / "log.checkMesh"
@@ -199,8 +245,46 @@ def generate(case_dir: str, solver: str = "simpleFoam",
         if m:
             mesh_cells = int(m.group(1))
 
+    # gather inputs
+    scheme_label, _ = _read_div_scheme(case)
+    if compressible:
+        config = {
+            "compressible": True,
+            "gamma":     _read_dict_value(case / "constant" / "thermophysicalProperties", "gamma") or "unknown",
+            "p_initial": _read_uniform_scalar(case / "0" / "p") or "unknown",
+            "T_initial": _read_uniform_scalar(case / "0" / "T") or "unknown",
+            "max_Co":    _read_dict_value(case / "system" / "controlDict", "maxCo") or "unknown",
+            "end_time":  _read_dict_value(case / "system" / "controlDict", "endTime") or "unknown",
+            "scheme":    scheme_label,
+            "mesh_cells": mesh_cells,
+        }
+    else:
+        nu_str   = _read_dict_value(case / "constant" / "transportProperties", "nu") or \
+                   _read_dict_value(case / "constant" / "physicalProperties", "nu") or "unknown"
+        turb_model = _read_dict_value(case / "constant" / "momentumTransport", "model") or \
+                     _read_dict_value(case / "constant" / "turbulenceProperties", "model") or "unknown"
+        U = _read_inlet_velocity(case)
+        U_mag = (U[0]**2 + U[1]**2 + U[2]**2) ** 0.5
+
+        try:
+            nu_val = float(nu_str)
+            re_val = round(U_mag / nu_val, 0) if nu_val > 0 else None
+        except Exception:
+            re_val = None
+
+        config = {
+            "compressible": False,
+            "nu":              nu_str,
+            "U_inlet":         U,
+            "U_mag":           round(U_mag, 4),
+            "Re":              re_val,
+            "turbulence":      turb_model,
+            "scheme":          scheme_label,
+            "mesh_cells":      mesh_cells,
+        }
+
     # gather outputs
-    residuals = _read_residuals(case, solver)
+    residuals = {} if diagonal else _read_residuals(case, solver)
     forces    = _read_forces(case)
     citations = _detect_citations(case)
 
@@ -217,15 +301,10 @@ def generate(case_dir: str, solver: str = "simpleFoam",
         "date":         date.today().isoformat(),
         "solver":       solver,
         "converged":    converged,
+        "completed":    completed,
+        "diagonal":     diagonal,
         "exit_code":    exit_code,
-        "config": {
-            "nu":              nu_str,
-            "U_inlet":         U,
-            "U_mag":           round(U_mag, 4),
-            "Re":              re_val,
-            "turbulence":      turb_model,
-            "mesh_cells":      mesh_cells,
-        },
+        "config":       config,
         "residuals":    residuals,
         "forces":       forces,
         "time_steps":   time_steps,
@@ -247,36 +326,60 @@ def _write_report(case: Path, s: dict):
     cfg = s["config"]
     lines = []
 
+    if s["diagonal"]:
+        status = "Completed" if s["completed"] else "Did not complete"
+    else:
+        status = "Converged" if s["converged"] else "Did not converge"
+
     lines += [
         f"# CakeFOAM Simulation Report",
         f"",
         f"**Case:** `{s['case']}`  ",
         f"**Date:** {s['date']}  ",
         f"**Solver:** {s['solver']}  ",
-        f"**Status:** {'Converged' if s['converged'] else 'Did not converge'}",
+        f"**Status:** {status}",
         f"",
     ]
 
     # Config table
-    re_str    = f"{int(cfg['Re']):,}" if cfg['Re'] else 'N/A'
     cells_str = f"{cfg['mesh_cells']:,}" if cfg['mesh_cells'] else 'N/A'
-    u = cfg['U_inlet']
-    lines += [
-        "## Configuration",
-        "",
-        "| Parameter | Value |",
-        "|-----------|-------|",
-        f"| Inlet velocity | ({u[0]}, {u[1]}, {u[2]}) m/s |",
-        f"| |U| | {cfg['U_mag']} m/s |",
-        f"| Kinematic viscosity (ν) | {cfg['nu']} m²/s |",
-        f"| Reynolds number | {re_str} |",
-        f"| Turbulence model | {cfg['turbulence']} |",
-        f"| Mesh cells | {cells_str} |",
-        "",
-    ]
+    lines += ["## Configuration", "", "| Parameter | Value |", "|-----------|-------|"]
+    if cfg["compressible"]:
+        lines += [
+            f"| Ratio of specific heats (γ) | {cfg['gamma']} |",
+            f"| Initial pressure | {cfg['p_initial']} Pa |",
+            f"| Initial temperature | {cfg['T_initial']} K |",
+            f"| Max Courant number | {cfg['max_Co']} |",
+            f"| End time | {cfg['end_time']} s |",
+            f"| Convection scheme div(phi,U) | {cfg['scheme']} |",
+            f"| Mesh cells | {cells_str} |",
+        ]
+    else:
+        re_str = f"{int(cfg['Re']):,}" if cfg['Re'] else 'N/A'
+        u = cfg['U_inlet']
+        lines += [
+            f"| Inlet velocity | ({u[0]}, {u[1]}, {u[2]}) m/s |",
+            f"| |U| | {cfg['U_mag']} m/s |",
+            f"| Kinematic viscosity (ν) | {cfg['nu']} m²/s |",
+            f"| Reynolds number | {re_str} |",
+            f"| Turbulence model | {cfg['turbulence']} |",
+            f"| Convection scheme div(phi,U) | {cfg['scheme']} |",
+            f"| Mesh cells | {cells_str} |",
+        ]
+    lines.append("")
 
     # Residuals table
-    if s["residuals"]:
+    if s["diagonal"]:
+        lines += [
+            "## Convergence",
+            "",
+            f"`{s['solver']}` is an explicit, density-based solver — it has no "
+            "linear-solver residuals and therefore no residual convergence "
+            "criterion. Progress is judged by whether it reached the "
+            "requested end time (see Status above and Time Steps below).",
+            "",
+        ]
+    elif s["residuals"]:
         lines += [
             "## Convergence",
             "",

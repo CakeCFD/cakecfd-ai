@@ -167,15 +167,24 @@ def run_solver(case_dir: str, solver: str = "simpleFoam",
         lines = log_path.read_text(errors="replace").splitlines()
         tail = "\n".join(lines[-60:])
 
-    converged = code == 0 and bool(
+    # OpenFOAM prints "End" on its own line once a run finishes, whether it
+    # converged or just reached its end time. Some solver/glibc combinations
+    # then crash during post-run cleanup (e.g. a double-free), which gives a
+    # nonzero exit code for a run that actually completed correctly — so
+    # "completed" is judged from the log, not blindly from the exit code.
+    reached_end = bool(re.search(r"(?m)^\s*End\s*$", tail))
+    completed = reached_end or code == 0
+    converged = completed and bool(
         re.search(r"SIMPLE solution converged|solution converged", tail, re.IGNORECASE)
     )
-    summary = report_generator.generate(case_dir, solver=solver, converged=converged, exit_code=code)
+    summary = report_generator.generate(case_dir, solver=solver, converged=converged,
+                                         exit_code=code, completed=completed)
 
     return {
         "exit_code": code,
         "log_tail": tail,
         "converged": converged,
+        "completed": completed,
         "report_path": summary["report_path"],
         "results_summary": summary,
     }
