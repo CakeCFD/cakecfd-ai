@@ -410,6 +410,14 @@ TOOLS = [
                     "description": "Flow axis: sets inlet velocity vector direction (default +X)",
                     "default": "+X",
                 },
+                "aoa_deg": {
+                    "type": "number",
+                    "description": (
+                        "Angle of attack in degrees (default 0). Only applied for flow_axis "
+                        "+X or -X: rotates the inlet velocity in the X-Z plane."
+                    ),
+                    "default": 0.0,
+                },
                 "div_scheme": {
                     "type": "string",
                     "enum": ["linearUpwind", "teno", "teno6"],

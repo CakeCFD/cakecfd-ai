@@ -98,6 +98,8 @@ def main():
         api_key=args.api_key,
         model=args.model,
     )
+    # Imported after CakeAgent so a missing package hits its clearer ImportError.
+    import anthropic
 
     while True:
         try:
@@ -113,7 +115,12 @@ def main():
         if not user_input.strip():
             continue
 
-        agent.chat(user_input)
+        # API failures (rate limits, overload, network) should not kill the
+        # REPL; print them and let the user retry.
+        try:
+            agent.chat(user_input)
+        except anthropic.APIError as e:
+            console.print(f"[bold red]API error:[/bold red] {e}")
 
 
 if __name__ == "__main__":

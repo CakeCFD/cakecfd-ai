@@ -94,12 +94,110 @@ CITATIONS = {
 }
 
 
+# readers
+
+# Matches "key value;" and dimensioned entries such as
+# "nu [0 2 -1 0 0 0 0] 1e-05;" or the older "nu nu [0 2 -1 0 0 0 0] 1e-05;".
+DIMENSIONED_ENTRY = r"\s+(?:(?:\w+\s+)?\[[^\]]*\]\s*)?([^\s;{}()\[\]]+)\s*;"
+
+
 def _read_dict_value(path: Path, key: str) -> str:
     if not path.exists():
         return ""
     text = path.read_text(errors="replace")
-    m = re.search(rf"{re.escape(key)}\s+([^\s;]+)\s*;", text)
+    m = re.search(r"\b" + re.escape(key) + DIMENSIONED_ENTRY, text)
     return m.group(1) if m else ""
+
+
+# Mesh/pre-processing utilities whose logs must never be mistaken for the
+# solver log when picking one by name or modification time.
+_UTILITY_LOGS = {
+    "log.checkMesh", "log.blockMesh", "log.snappyHexMesh",
+    "log.surfaceFeatureExtract", "log.surfaceFeatures", "log.decomposePar",
+    "log.reconstructPar", "log.reconstructParMesh", "log.potentialFoam",
+    "log.renumberMesh", "log.topoSet", "log.setFields", "log.mapFields",
+    "log.createPatch", "log.foamDictionary", "log.extrudeMesh",
+}
+
+
+def find_solver_log(case: Path, solver: str | None = None) -> Path | None:
+    """
+    Pick the solver log for a case. Order: log.<solver> if a solver is given,
+    then the log name recorded by run_solver in .solver_log, then the newest
+    log.* that is not a mesh/pre-processing utility (log.*Foam preferred).
+    """
+    case = Path(case)
+    if solver:
+        p = case / f"log.{solver}"
+        if p.exists():
+            return p
+    rec = case / ".solver_log"
+    if rec.exists():
+        p = case / rec.read_text(errors="replace").strip()
+        if p.name and p.exists():
+            return p
+    cands = [p for p in case.glob("log.*")
+             if p.is_file() and p.name not in _UTILITY_LOGS]
+    if not cands:
+        return None
+    cands.sort(key=lambda p: (p.name.endswith("Foam"), p.stat().st_mtime), reverse=True)
+    return cands[0]
+
+
+def _stl_bbox_length(case: Path) -> float | None:
+    """Largest bounding-box extent over all STLs in constant/triSurface."""
+    import struct
+    lo = [1e30] * 3
+    hi = [-1e30] * 3
+    for stl in sorted((case / "constant" / "triSurface").glob("*.stl")):
+        try:
+            data = stl.read_bytes()
+        except OSError:
+            continue
+        verts = []
+        if data[:5] == b"solid" and b"\x00" not in data[:256]:
+            for line in data.decode("utf-8", errors="replace").splitlines():
+                parts = line.split()
+                if len(parts) >= 4 and parts[0] == "vertex":
+                    try:
+                        verts.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                    except ValueError:
+                        pass
+        elif len(data) >= 84:
+            n_tri = struct.unpack_from("<I", data, 80)[0]
+            off = 84
+            for _ in range(n_tri):
+                if off + 50 > len(data):
+                    break
+                for v in range(1, 4):
+                    verts.append(struct.unpack_from("<fff", data, off + v * 12))
+                off += 50
+        for x in verts:
+            for i in range(3):
+                lo[i] = min(lo[i], x[i])
+                hi[i] = max(hi[i], x[i])
+    if lo[0] > 1e29:
+        return None
+    L = max(hi[i] - lo[i] for i in range(3))
+    return L if L > 0 else None
+
+
+def _reference_length(case: Path) -> tuple[float | None, str]:
+    """
+    Reference length for the Reynolds number: lRef from a forceCoeffs entry in
+    controlDict if present, otherwise the largest geometry bounding-box extent.
+    Returns (length, source) with length None when neither is available.
+    """
+    lref = _read_dict_value(case / "system" / "controlDict", "lRef")
+    try:
+        if lref and float(lref) > 0:
+            return float(lref), "controlDict lRef"
+    except ValueError:
+        pass
+    L = _stl_bbox_length(case)
+    if L:
+        return L, "geometry bounding box (largest extent)"
+    return None, ""
 
 
 def _read_uniform_scalar(path: Path) -> str:
@@ -123,12 +221,9 @@ def _read_inlet_velocity(case: Path) -> list[float]:
 
 
 def _read_residuals(case: Path, solver: str) -> dict:
-    log = case / f"log.{solver}"
-    if not log.exists():
-        candidates = list(case.glob("log.*"))
-        if not candidates:
-            return {}
-        log = candidates[0]
+    log = find_solver_log(case, solver)
+    if log is None:
+        return {}
 
     text = log.read_text(errors="replace")
     pattern = re.compile(
@@ -254,16 +349,36 @@ def generate(case_dir: str, solver: str = "simpleFoam",
     else:
         nu_str   = _read_dict_value(case / "constant" / "transportProperties", "nu") or \
                    _read_dict_value(case / "constant" / "physicalProperties", "nu") or "unknown"
-        turb_model = _read_dict_value(case / "constant" / "momentumTransport", "model") or \
-                     _read_dict_value(case / "constant" / "turbulenceProperties", "model") or "unknown"
+        # momentumTransport uses "model"; turbulenceProperties (what OF2412
+        # ESI actually reads) uses "RASModel" / "LESModel".
+        turb_model = ""
+        for _f, _keys in (("momentumTransport", ("model", "RASModel", "LESModel")),
+                          ("turbulenceProperties", ("RASModel", "LESModel", "model"))):
+            for _k in _keys:
+                turb_model = _read_dict_value(case / "constant" / _f, _k)
+                if turb_model:
+                    break
+            if turb_model:
+                break
+        if not turb_model:
+            sim_type = (_read_dict_value(case / "constant" / "turbulenceProperties", "simulationType") or
+                        _read_dict_value(case / "constant" / "momentumTransport", "simulationType"))
+            turb_model = "laminar" if sim_type == "laminar" else "unknown"
         U = _read_inlet_velocity(case)
         U_mag = (U[0]**2 + U[1]**2 + U[2]**2) ** 0.5
 
+        # Re needs a length scale. Without one, U/nu is only the unit
+        # Reynolds number (1/m), so it is reported under that name instead.
+        L_ref, L_src = _reference_length(case)
+        re_val = re_unit = None
         try:
             nu_val = float(nu_str)
-            re_val = round(U_mag / nu_val, 0) if nu_val > 0 else None
+            if nu_val > 0:
+                re_unit = U_mag / nu_val
+                if L_ref:
+                    re_val = round(re_unit * L_ref, 0)
         except Exception:
-            re_val = None
+            pass
 
         config = {
             "compressible": False,
@@ -271,6 +386,9 @@ def generate(case_dir: str, solver: str = "simpleFoam",
             "U_inlet":         U,
             "U_mag":           round(U_mag, 4),
             "Re":              re_val,
+            "L_ref":           round(L_ref, 6) if L_ref else None,
+            "L_ref_source":    L_src or None,
+            "Re_unit_per_m":   float(f"{re_unit:.6g}") if re_unit is not None else None,
             "turbulence":      turb_model,
             "scheme":          scheme_label,
             "mesh_cells":      mesh_cells,
@@ -343,13 +461,20 @@ def _write_report(case: Path, s: dict):
             f"| Mesh cells | {cells_str} |",
         ]
     else:
-        re_str = f"{int(cfg['Re']):,}" if cfg['Re'] else 'N/A'
+        if cfg.get("Re"):
+            re_row = (f"| Reynolds number (L_ref = {cfg['L_ref']:g} m, "
+                      f"{cfg['L_ref_source']}) | {int(cfg['Re']):,} |")
+        elif cfg.get("Re_unit_per_m") is not None:
+            re_row = (f"| Unit Reynolds number U/ν (no reference length found) | "
+                      f"{cfg['Re_unit_per_m']:.4g} 1/m |")
+        else:
+            re_row = "| Reynolds number | N/A |"
         u = cfg['U_inlet']
         lines += [
             f"| Inlet velocity | ({u[0]}, {u[1]}, {u[2]}) m/s |",
             f"| |U| | {cfg['U_mag']} m/s |",
             f"| Kinematic viscosity (ν) | {cfg['nu']} m²/s |",
-            f"| Reynolds number | {re_str} |",
+            re_row,
             f"| Turbulence model | {cfg['turbulence']} |",
             f"| Convection scheme div(phi,U) | {cfg['scheme']} |",
             f"| Mesh cells | {cells_str} |",

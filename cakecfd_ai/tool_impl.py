@@ -23,6 +23,7 @@ All functions receive a dict of validated inputs and return a dict
 
 import os
 import re
+import shlex
 import subprocess
 import json
 import urllib.request
@@ -42,7 +43,8 @@ OF_BASHRC = os.environ.get("OF_BASHRC", "/usr/lib/openfoam/openfoam2412/etc/bash
 def _read_of_value(path: Path, key: str) -> str:
     if not path.exists():
         return ""
-    m = re.search(r'\b' + re.escape(key) + r'\s+([^\s;{}()\[\]]+)\s*;',
+    # DIMENSIONED_ENTRY also accepts "nu [0 2 -1 0 0 0 0] 1e-05;"
+    m = re.search(r'\b' + re.escape(key) + report_generator.DIMENSIONED_ENTRY,
                   path.read_text(errors="replace"))
     return m.group(1) if m else ""
 
@@ -127,7 +129,7 @@ def _citations(sim_type: str, turb_model: str, case_dir: str = "") -> list:
 
 def _of(cmd: str, cwd: str | None = None) -> tuple[str, int]:
     """Run cmd inside the OpenFOAM environment, return (output, returncode)."""
-    full = f'source {OF_BASHRC} 2>/dev/null && {cmd}'
+    full = f'source {shlex.quote(OF_BASHRC)} 2>/dev/null && {cmd}'
     result = subprocess.run(
         ["bash", "-c", full],
         capture_output=True, text=True,
@@ -143,15 +145,28 @@ def run_solver(case_dir: str, solver: str = "simpleFoam",
         return {"error": f"Case directory not found: {case_dir}"}
 
     if max_iterations > 0:
-        _of(f"foamDictionary system/controlDict -entry endTime -set {max_iterations}",
+        _of("foamDictionary system/controlDict -entry endTime -set "
+            f"{shlex.quote(str(int(max_iterations)))}",
             cwd=case_dir)
 
     log_name = f"log.{solver}"
+    q_solver, q_log = shlex.quote(solver), shlex.quote(log_name)
+    # Record which log belongs to the solver so monitor_solver/read_residuals
+    # never pick up log.checkMesh, log.snappyHexMesh etc. by mistake.
+    (Path(case_dir) / ".solver_log").write_text(log_name, encoding="utf-8")
 
     if background:
-        # Start solver detached; write PID to case_dir/.solver_pid
-        full_cmd = f'source {OF_BASHRC} 2>/dev/null && {solver} > {log_name} 2>&1 & echo $!'
-        result = subprocess.run(["bash", "-c", full_cmd], capture_output=True, text=True, cwd=case_dir)
+        # Only the solver command itself is backgrounded (not the whole
+        # "source && ..." list), with all three std streams redirected away
+        # from our pipe, so bash prints $! and exits immediately. setsid and
+        # nohup both exec in place, so $! is the solver's own PID; setsid
+        # detaches it from our session and it is reparented (and reaped) by
+        # init once this bash exits, so a finished solver never lingers as a
+        # zombie that kill -0 would still report as alive.
+        full_cmd = (f'source {shlex.quote(OF_BASHRC)} 2>/dev/null && '
+                    f'{{ setsid nohup {q_solver} > {q_log} 2>&1 < /dev/null & echo $!; }}')
+        result = subprocess.run(["bash", "-c", full_cmd], capture_output=True, text=True,
+                                cwd=case_dir, stdin=subprocess.DEVNULL)
         pid = result.stdout.strip()
         if pid.isdigit():
             (Path(case_dir) / ".solver_pid").write_text(pid, encoding="utf-8")
@@ -159,7 +174,9 @@ def run_solver(case_dir: str, solver: str = "simpleFoam",
                     "note": "Solver running in background. Use monitor_solver to track progress."}
         return {"error": "Failed to start background solver", "output": result.stdout + result.stderr}
 
-    output, code = _of(f"{solver} > {log_name} 2>&1", cwd=case_dir)
+    # A foreground run supersedes any earlier background run's PID file.
+    (Path(case_dir) / ".solver_pid").unlink(missing_ok=True)
+    output, code = _of(f"{q_solver} > {q_log} 2>&1", cwd=case_dir)
 
     log_path = Path(case_dir) / log_name
     tail = ""
@@ -193,11 +210,10 @@ def run_solver(case_dir: str, solver: str = "simpleFoam",
 def read_residuals(case_dir: str, log_name: str = "log.simpleFoam") -> dict:
     log_path = Path(case_dir) / log_name
     if not log_path.exists():
-        # Try to find any log file
-        candidates = list(Path(case_dir).glob("log.*"))
-        if not candidates:
+        # Fall back to the recorded solver log, else the newest non-utility log
+        log_path = report_generator.find_solver_log(Path(case_dir))
+        if log_path is None:
             return {"error": "No solver log found"}
-        log_path = candidates[0]
 
     text = log_path.read_text(errors="replace")
 
@@ -407,19 +423,24 @@ def _write_boundary_data(case_dir: str, patch: str, field: str,
     )
     (base / "points").write_text(pts_text, encoding="utf-8")
 
-    cls   = "vectorField" if components == 3 else "scalarField"
-    fname = "U" if components == 3 else "p"
+    # 3 components -> vector (U), 9 -> tensor (velocity gradient), else scalar
+    cls = {3: "vectorField", 9: "tensorField"}.get(components, "scalarField")
+    # Name the file after the OpenFOAM field it feeds, so temperature data
+    # does not overwrite pressure (or vorticity overwrite velocity)
+    fname = {"velocity": "U", "pressure": "p", "temperature": "T",
+             "velocity_gradient": "gradU", "pressure_gradient": "gradp",
+             "vorticity": "vorticity", "magnetic": "B"}.get(
+        field, {3: "U", 9: "gradU"}.get(components, "p"))
 
     for ti, (t, vals) in enumerate(zip(times, values_by_time)):
-        tdir = base / f"{t:.4f}"
+        tdir = base / f"{t:g}"
         tdir.mkdir(exist_ok=True)
         lines = f"FoamFile\n{{\n    version 2.0; format ascii;\n    class {cls}; object {fname};\n}}\n{n}\n(\n"
         for i in range(n):
-            if components == 3:
-                vx = vals[i*3]   if i*3   < len(vals) else 0.0
-                vy = vals[i*3+1] if i*3+1 < len(vals) else 0.0
-                vz = vals[i*3+2] if i*3+2 < len(vals) else 0.0
-                lines += f"  ({vx} {vy} {vz})\n"
+            if components in (3, 9):
+                comps = [vals[i*components + c] if i*components + c < len(vals) else 0.0
+                         for c in range(components)]
+                lines += "  (" + " ".join(str(v) for v in comps) + ")\n"
             else:
                 lines += f"  {vals[i] if i < len(vals) else 0.0}\n"
         lines += ")\n"
@@ -479,6 +500,12 @@ def query_turbulence_db(
     times_to_query = time_range if time_range else [time]
 
     all_results: list[dict] = []
+    # Per-time failures are recorded here instead of aborting the whole
+    # time_range, so times already fetched are not thrown away.
+    failed: list[dict] = []
+
+    if server_type not in ("jhtdb_soap", "rest_json", "rest_xml"):
+        return {"error": f"Unknown server_type: {server_type}"}
 
     for t in times_to_query:
         raw: str = ""
@@ -497,7 +524,8 @@ def query_turbulence_db(
                     raw = resp.read().decode("utf-8", errors="replace")
                 vals = _jhtdb_parse_soap(raw, result_tags)
             except Exception as e:
-                return {"error": str(e), "endpoint": base, "time": t}
+                failed.append({"time": t, "error": str(e)})
+                continue
 
         elif server_type == "rest_json":
             body_json = json.dumps({
@@ -514,7 +542,8 @@ def query_turbulence_db(
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     raw = resp.read().decode("utf-8", errors="replace")
             except Exception as e:
-                return {"error": str(e), "endpoint": base, "time": t}
+                failed.append({"time": t, "error": str(e)})
+                continue
 
             if response_format:
                 try:
@@ -543,10 +572,8 @@ def query_turbulence_db(
                     raw = resp.read().decode("utf-8", errors="replace")
                 vals = _jhtdb_parse_soap(raw, xml_tags)
             except Exception as e:
-                return {"error": str(e), "endpoint": base, "time": t}
-
-        else:
-            return {"error": f"Unknown server_type: {server_type}"}
+                failed.append({"time": t, "error": str(e)})
+                continue
 
         point_data = []
         for i in range(len(points)):
@@ -554,6 +581,10 @@ def query_turbulence_db(
             point_data.append(vals[start:start + n_components])
 
         all_results.append({"time": t, "values": point_data, "n_components": n_components})
+
+    if not all_results:
+        return {"error": failed[0]["error"] if len(failed) == 1 else "All queries failed",
+                "endpoint": base, "failed_times": failed}
 
     # Turb stats (velocity fields only)
     stats_out: dict = {}
@@ -576,9 +607,10 @@ def query_turbulence_db(
                 [v for pv in r["values"] for v in pv]
                 for r in all_results
             ]
+            # Only the times that succeeded, so values and times stay aligned
             bd_out = _write_boundary_data(
                 bd_case_dir, bd_patch, field,
-                points, vals_by_time, times_to_query, n_components)
+                points, vals_by_time, [r["time"] for r in all_results], n_components)
 
     result: dict = {
         "endpoint":       base,
@@ -593,6 +625,8 @@ def query_turbulence_db(
         result["turb_stats"] = stats_out
     if bd_out:
         result["boundary_data"] = bd_out
+    if failed:
+        result["failed_times"] = failed
     return result
 
 
@@ -744,8 +778,10 @@ def setup_domain(case_dir: str, stl_name: str,
     else:              loc_x, loc_y, loc_z = cx, cy, dz1 - frac*(dz1-dz0)
     layers_block = ""
     if add_layers:
+        # "{geo}.*" matches both the single-region patch "{geo}" and the
+        # per-region patches "{geo}_<region>" of a multi-solid STL.
         layers_block = (f"    layers\n    {{\n"
-                        f"        \"{geo_name}_.*\" {{ nSurfaceLayers {n_layers}; }}\n"
+                        f"        \"{geo_name}.*\" {{ nSurfaceLayers {n_layers}; }}\n"
                         f"    }}\n")
 
     shmd = foam_header("dictionary", "snappyHexMeshDict")
@@ -1164,7 +1200,9 @@ def write_solver_setup(case_dir: str, case_name: str,
     if not laminar:
         tp += f"RAS\n{{\n    RASModel     {turb_model_name};\n    turbulence   on;\n    printCoeffs  on;\n}}\n"
     (const_dir / "turbulenceProperties").write_text(tp, encoding="utf-8")
-    # Also write momentumTransport (OF 2412 canonical name) so it doesn't inherit a stale LES file
+    # OF v2412 (ESI) reads turbulenceProperties above. momentumTransport is the
+    # Foundation-release name; write it too so a case moved to that line, or a
+    # reader that checks it first, never sees a stale LES file.
     mt = (fh("dictionary", "momentumTransport") +
           f"simulationType {_sim_type};\n")
     if not laminar:
@@ -1215,9 +1253,7 @@ def export_results(case_dir: str, output_dir: str,
                 log_path = p
                 break
     if log_path is None:
-        candidates = list(root.glob("log.*"))
-        if candidates:
-            log_path = candidates[0]
+        log_path = report_generator.find_solver_log(root)
 
     # parse residuals
     res_rows: list[dict] = []
@@ -1253,9 +1289,12 @@ def export_results(case_dir: str, output_dir: str,
     force_rows: list[dict] = []
     forces_dir = root / "postProcessing" / "forces"
     if forces_dir.exists():
+        # Newest start-time directory first (as read_forces does), so after a
+        # restart the latest data wins instead of the oldest.
         time_dirs = sorted(
             [d for d in forces_dir.iterdir() if d.is_dir()],
             key=lambda d: float(d.name) if d.name.replace(".", "").isdigit() else -1,
+            reverse=True,
         )
         for td in time_dirs:
             fp = td / "forces.dat"
@@ -1343,14 +1382,21 @@ def export_results(case_dir: str, output_dir: str,
 
     # gather inputs for report
     nu       = _read_of_value(root / "constant" / "transportProperties", "nu")
-    sim_type = _read_of_value(root / "constant" / "momentumTransport", "simulationType")
+    # OF v2412 (ESI) reads turbulenceProperties; momentumTransport is the
+    # Foundation name. Use whichever exists, turbulenceProperties first.
+    _turb_file = root / "constant" / "turbulenceProperties"
+    if not _turb_file.exists():
+        _turb_file = root / "constant" / "momentumTransport"
+    sim_type = _read_of_value(_turb_file, "simulationType")
     turb_model = ""
     if sim_type == "RAS":
         for _k in ("RASModel", "model"):
-            turb_model = _read_of_value(root / "constant" / "momentumTransport", _k)
+            turb_model = _read_of_value(_turb_file, _k)
             if turb_model: break
     elif sim_type != "laminar":
-        turb_model = _read_of_value(root / "constant" / "momentumTransport", "model")
+        for _k in ("LESModel", "model"):
+            turb_model = _read_of_value(_turb_file, _k)
+            if turb_model: break
     if not turb_model:
         turb_model = "laminar"
     end_time = _read_of_value(root / "system" / "controlDict", "endTime")
@@ -1432,7 +1478,10 @@ def export_results(case_dir: str, output_dir: str,
                 f.write(f"Time: {fr['time']} s\n\n")
                 f.write("| Component | Fx [N] | Fy [N] | Fz [N] |\n|---|---|---|---|\n")
                 f.write(f"| Force | {fr['Fx']:.6g} | {fr['Fy']:.6g} | {fr['Fz']:.6g} |\n")
-                f.write(f"| Moment [N·m] | {fr['Mx']:.6g} | {fr['My']:.6g} | {fr['Mz']:.6g} |\n\n")
+                if "Mx" in fr:
+                    f.write(f"| Moment [N·m] | {fr['Mx']:.6g} | {fr['My']:.6g} | {fr['Mz']:.6g} |\n\n")
+                else:
+                    f.write("| Moment [N·m] | n/a | n/a | n/a |\n\n")
                 f.write("> Cd = Fx / (0.5 * rho * |U|^2 * A_ref)  -- supply rho, A_ref to compute.\n\n")
 
             refs = _citations(sim_type, turb_model, case_dir)
@@ -1467,7 +1516,8 @@ def export_results(case_dir: str, output_dir: str,
             obj["final_residuals"] = {k: last[k] for k in field_names if k in last}
         if force_rows:
             fr = force_rows[-1]
-            obj["forces_latest"] = {k: fr[k] for k in ("time","Fx","Fy","Fz","Mx","My","Mz")}
+            # Moments are absent if moment.dat is missing or its times don't match
+            obj["forces_latest"] = {k: fr.get(k) for k in ("time","Fx","Fy","Fz","Mx","My","Mz")}
         p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
         written.append(str(p))
 
@@ -1537,22 +1587,25 @@ def monitor_solver(case_dir: str, log_name: str | None = None,
     """
     root = Path(case_dir)
 
-    # Detect log
+    # Detect log: explicit name, else the log recorded by run_solver, else the
+    # newest log that is not checkMesh/blockMesh/snappyHexMesh etc.
     if log_name:
         log_path = root / log_name
     else:
-        pid_file = root / ".solver_pid"
-        candidates = sorted(root.glob("log.*"), key=lambda p: p.stat().st_mtime, reverse=True)
-        log_path = candidates[0] if candidates else None
+        log_path = report_generator.find_solver_log(root)
+    # Solver name: from the log recorded at launch if any, else from the log name
+    rec = root / ".solver_log"
+    _sname = rec.read_text(errors="replace").strip() if rec.exists() else ""
+    if not _sname and log_path:
+        _sname = log_path.name
+    solver = _sname.split(".", 1)[1] if "." in _sname else ""
 
     # Check if process is running
     running = False
     pid_file = root / ".solver_pid"
     if pid_file.exists():
         try:
-            pid = int(pid_file.read_text().strip())
-            result = subprocess.run(["kill", "-0", str(pid)], capture_output=True)
-            running = result.returncode == 0
+            running = _pid_alive(int(pid_file.read_text().strip()), solver)
         except Exception:
             pass
 
@@ -1576,21 +1629,69 @@ def monitor_solver(case_dir: str, log_name: str | None = None,
             cur_time = float(m.group(1))
             latest = {}
             continue
-        m = re_res.match(line)
-        if m:
+        # search, not match: real lines start with the linear solver name,
+        # e.g. "smoothSolver:  Solving for Ux, Initial residual = ..."
+        m = re_res.search(line)
+        if m and m.group(1) not in latest:
             latest[m.group(1)] = float(m.group(2))
 
     converged = bool(re.search(r"SIMPLE solution converged|solution converged", text, re.IGNORECASE))
+    reached_end = bool(re.search(r"(?m)^\s*End\s*$", "\n".join(lines[-60:])))
 
-    return {
+    out = {
         "running":        running,
         "converged":      converged,
+        "completed":      reached_end,
         "steps_complete": step_count,
         "current_time":   cur_time,
         "latest_residuals": latest,
         "log_tail":       tail,
         "log":            str(log_path),
     }
+
+    # A background run has no caller waiting to write results_summary.json /
+    # report.md, so do it here once the solver has exited. Skip if the summary
+    # is already newer than the log (i.e. generated on an earlier call).
+    if pid_file.exists() and not running and solver:
+        summary_path = root / "results_summary.json"
+        if (not summary_path.exists()
+                or summary_path.stat().st_mtime < log_path.stat().st_mtime):
+            try:
+                # The background exit code is not observable from here, so
+                # completion is judged from the log's "End" line, as run_solver does.
+                summary = report_generator.generate(
+                    case_dir, solver=solver, converged=converged and reached_end,
+                    exit_code=0 if reached_end else 1, completed=reached_end)
+                out["report_path"] = summary["report_path"]
+                out["results_summary"] = summary
+            except Exception as e:
+                out["report_error"] = str(e)
+
+    return out
+
+
+def _pid_alive(pid: int, solver: str = "") -> bool:
+    """
+    True if pid is a live (non-zombie) process. When /proc is available and a
+    solver name is given, also require the process name to match, so a PID
+    recycled by an unrelated process is not mistaken for the solver.
+    """
+    if Path("/proc/self/stat").exists():
+        try:
+            txt = Path(f"/proc/{pid}/stat").read_text()
+        except OSError:
+            return False
+        # Format: "pid (comm) state ...": comm may contain spaces/parens
+        comm = txt[txt.find("(") + 1:txt.rfind(")")]
+        state = txt[txt.rfind(")") + 2:txt.rfind(")") + 3]
+        if state in ("Z", "X"):
+            return False
+        # The kernel truncates comm to 15 characters. Right after launch the
+        # PID can briefly still show the launcher (bash/setsid/nohup) before
+        # it execs the solver.
+        return not solver or comm in (solver[:15], "bash", "setsid", "nohup")
+    result = subprocess.run(["kill", "-0", str(pid)], capture_output=True)
+    return result.returncode == 0
 
 
 def check_mesh(case_dir: str, latest_time: bool = True) -> dict:
@@ -1602,7 +1703,9 @@ def check_mesh(case_dir: str, latest_time: bool = True) -> dict:
         return {"error": f"Case directory not found: {case_dir}"}
 
     flag = "-latestTime" if latest_time else ""
-    output, code = _of(f"checkMesh {flag} 2>&1 | tee log.checkMesh", cwd=case_dir)
+    # pipefail so the exit code is checkMesh's, not tee's
+    output, code = _of(f"set -o pipefail; checkMesh {flag} 2>&1 | tee log.checkMesh",
+                       cwd=case_dir)
 
     # Parse quality metrics
     stats: dict = {"raw_exit_code": code}
@@ -1617,7 +1720,9 @@ def check_mesh(case_dir: str, latest_time: bool = True) -> dict:
     stats["max_non_ortho"]  = _find(r'non-orthogonality Max:\s+([\d.]+)', output, float)
     stats["avg_non_ortho"]  = _find(r'non-orthogonality.*?average:\s+([\d.]+)', output, float)
     stats["max_skewness"]   = _find(r'[Mm]ax skewness\s*=\s*([\d.]+)', output, float)
-    stats["max_aspect"]     = _find(r'[Mm]ax aspect ratio\s*=\s*([\d.]+)', output, float)
+    # "Max aspect ratio = X  OK." when fine, but
+    # "***High aspect ratio cells found, Max aspect ratio: X" when failing
+    stats["max_aspect"]     = _find(r'[Mm]ax aspect ratio\s*[=:]\s*([\d.eE+]+)', output, float)
     stats["mesh_ok"]        = "Mesh OK" in output or "No errors" in output
 
     # Quality advice
@@ -1764,9 +1869,8 @@ def generate_report(case_dir: str, output_dir: str | None = None,
             if p.exists():
                 log_path = p; detected_solver = s; break
     if not log_path:
-        cands = list(root.glob("log.*"))
-        if cands:
-            log_path = cands[0]
+        log_path = report_generator.find_solver_log(root)
+        if log_path:
             detected_solver = log_path.name.split(".", 1)[-1]
 
     # Parse residuals
@@ -1801,22 +1905,42 @@ def generate_report(case_dir: str, output_dir: str | None = None,
         if _turb and all(v < 1e-3 for v in _turb) and _u_vals and all(v < 0.1 for v in _u_vals):
             converged = True
 
-    # Parse forces
+    # Parse forces. In v2412 force.dat columns 4-6 are the pressure force
+    # components, not moments; moments live in moment.dat (same layout,
+    # cols 1-3 total), so read them from there as export_results does.
+    # Newest start-time directory first so a restart's data wins.
     force_rows: list[dict] = []
-    for td in sorted((root / "postProcessing" / "forces").glob("*/") if
-                     (root / "postProcessing" / "forces").exists() else [],
-                     key=lambda d: float(d.name) if d.name.replace(".", "").isdigit() else -1):
+    _fdir = root / "postProcessing" / "forces"
+    for td in sorted([d for d in _fdir.iterdir() if d.is_dir()] if _fdir.exists() else [],
+                     key=lambda d: float(d.name) if d.name.replace(".", "").isdigit() else -1,
+                     reverse=True):
         fp = td / "forces.dat"
         if not fp.exists(): fp = td / "force.dat"
         if not fp.exists(): continue
+        moments: dict[float, tuple] = {}
+        for mname in ("moments.dat", "moment.dat"):
+            mf = td / mname
+            if not mf.exists(): continue
+            for line in mf.read_text().splitlines():
+                if line.startswith("#") or not line.strip(): continue
+                parts = line.replace("(", " ").replace(")", " ").split()
+                if len(parts) < 4: continue
+                try:
+                    moments[float(parts[0])] = (float(parts[1]), float(parts[2]), float(parts[3]))
+                except ValueError:
+                    continue
+            break
         for line in fp.read_text().splitlines():
             if line.startswith("#") or not line.strip(): continue
             parts = line.replace("(", " ").replace(")", " ").split()
-            if len(parts) < 7: continue
+            if len(parts) < 4: continue
             try:
-                force_rows.append({"time": float(parts[0]),
-                                   "Fx": float(parts[1]), "Fy": float(parts[2]), "Fz": float(parts[3]),
-                                   "Mx": float(parts[4]), "My": float(parts[5]), "Mz": float(parts[6])})
+                t = float(parts[0])
+                row = {"time": t,
+                       "Fx": float(parts[1]), "Fy": float(parts[2]), "Fz": float(parts[3])}
+                if t in moments:
+                    row["Mx"], row["My"], row["Mz"] = moments[t]
+                force_rows.append(row)
             except ValueError:
                 continue
         if force_rows: break
@@ -1998,7 +2122,10 @@ def generate_report(case_dir: str, output_dir: str | None = None,
             f.write("## Aerodynamic Forces (final)\n\n")
             f.write("| Component | Fx [N] | Fy [N] | Fz [N] |\n|---|---|---|---|\n")
             f.write(f"| Force | {fr['Fx']:.6g} | {fr['Fy']:.6g} | {fr['Fz']:.6g} |\n")
-            f.write(f"| Moment [N·m] | {fr['Mx']:.6g} | {fr['My']:.6g} | {fr['Mz']:.6g} |\n\n")
+            if "Mx" in fr:
+                f.write(f"| Moment [N·m] | {fr['Mx']:.6g} | {fr['My']:.6g} | {fr['Mz']:.6g} |\n\n")
+            else:
+                f.write("| Moment [N·m] | n/a | n/a | n/a |\n\n")
 
         f.write("## References\n\n")
         for i, key in enumerate(cite_keys, 1):
@@ -2039,11 +2166,17 @@ def write_case_param(case_dir: str, dict_file: str, key: str, value: str) -> dic
     if not full_dict.exists():
         return {"error": f"Dict file not found: {full_dict}"}
 
-    _, code = _of(
-        f"foamDictionary {dict_file} -entry {key} -set {value}",
+    # Quote everything: values like "uniform (10 0 0)" contain spaces and
+    # parentheses that bash would otherwise parse as syntax.
+    output, code = _of(
+        f"foamDictionary {shlex.quote(dict_file)} -entry {shlex.quote(key)} "
+        f"-set {shlex.quote(str(value))}",
         cwd=case_dir,
     )
-    return {"success": code == 0, "key": key, "value": value, "file": dict_file}
+    result = {"success": code == 0, "key": key, "value": value, "file": dict_file}
+    if code != 0:
+        result["output"] = "\n".join(output.splitlines()[-20:])
+    return result
 
 
 # Dispatch table - maps tool name → function

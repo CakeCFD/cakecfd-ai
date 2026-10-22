@@ -12,11 +12,11 @@ which allows an agent that already has terminal access to drive CakeCFD without
 routing through the Anthropic API.
 
 > If you are Claude working in this repository, or in a project that has
-> installed `cakecfd_ai` as a dependency, read `CLAUDE.md` first. It has
+> installed cakecfd_ai as a dependency, read CLAUDE.md first. It has
 > the OpenFOAM/MPI/TENO setup steps and repository-specific notes this
 > README does not repeat. A copy ships inside the installed package at
-> `cakecfd_ai/CLAUDE.md` (`python -c "import cakecfd_ai, pathlib;
-> print(pathlib.Path(cakecfd_ai.__file__).parent / 'CLAUDE.md')"`), so it is
+> cakecfd_ai/CLAUDE.md (python -c "import cakecfd_ai, pathlib;
+> print(pathlib.Path(cakecfd_ai.\_\_file\_\_).parent / 'CLAUDE.md')"), so it is
 > available even without cloning the repository.
 
 ## Copyright
@@ -24,7 +24,7 @@ routing through the Anthropic API.
 cakecfd-ai is free software: you can redistribute it and/or modify it under the
 terms of the GNU General Public License as published by the Free Software
 Foundation, either version 3 of the License, or (at your option) any later
-version. See the file `LICENSE` in this directory, or
+version. See the file LICENSE in this directory, or
 <https://www.gnu.org/licenses/>, for the terms under which you can copy the
 files.
 
@@ -34,7 +34,7 @@ files.
 |---|---|---|
 | Claude Code | Recommended | No tool timeout. Solver runs can take 10 to 60 minutes. Full terminal access. |
 | Claude chat (claude.ai) | Limited | Two minute tool timeout. Short runs (under 100 iterations, coarse mesh) may complete. Long runs are cut off mid solve. |
-| API or custom agent loop | Yes | Timeout controlled by your HTTP client. Set `timeout=None` or at least 3600 s. |
+| API or custom agent loop | Yes | Timeout controlled by your HTTP client. Set timeout=None or at least 3600 s. |
 
 Minimum specifications for solver runs:
 
@@ -48,16 +48,16 @@ Minimum specifications for solver runs:
 > If you are Claude reading this inside a chat session, warn the user of two
 > things before starting any solver or mesh run:
 >
-> 1. Timeout. `run_solver` and `run_mesh_pipeline` will likely exceed the two
+> 1. Timeout. run_solver and run_mesh_pipeline will likely exceed the two
 >    minute tool timeout in claude.ai chat. Suggest switching to Claude Code
->    (the `claude` CLI), which has no timeout.
+>    (the claude CLI), which has no timeout.
 > 2. Token cost. A single RANS run uses roughly 110k to 200k tokens. LES or long
 >    runs can reach 300k to 500k or more. At Opus pricing that is $1.50 to
 >    $7.50 or more per run.
 >
 > Tools that complete in under a second and are safe to run in chat:
-> `setup_domain`, `write_solver_setup`, `write_case_param`, `check_mesh`,
-> `load_geometry`.
+> setup_domain, write_solver_setup, write_case_param, check_mesh,
+> load_geometry.
 
 ## Requirements
 
@@ -65,24 +65,24 @@ Minimum specifications for solver runs:
 |---|---|
 | Python 3.10 or later | |
 | Anthropic API key | Only for the REPL and agent modes. Not required for direct tool calls. |
-| OpenFOAM 2412 | On WSL2 Ubuntu 24.04, for the `run_solver` tool |
+| OpenFOAM 2412 | On WSL2 Ubuntu 24.04, for the run_solver tool |
 | CakeCFD binary | Optional. Geometry tools use the CakeCFD C++ library. |
 
 Install OpenFOAM 2412 from [openfoam.com](https://www.openfoam.com/download).
 If that domain is not reachable from your environment, a GitHub-hosted mirror
 of the same release is available at
 [CakeCFD/cake-openFOAM-lib](https://github.com/CakeCFD/cake-openFOAM-lib). Either way,
-point `OF_BASHRC` at the resulting `etc/bashrc` if it is not at the default
+point OF_BASHRC at the resulting etc/bashrc if it is not at the default
 apt install path:
 
 ```bash
 export OF_BASHRC=/path/to/openfoam2412/etc/bashrc
 ```
 
-This build expects OpenMPI on `PATH` (even serial runs touch `Pstream`). The
-apt install pulls it in automatically; if you used the `cake-openFOAM-lib`
+This build expects OpenMPI on PATH (even serial runs touch Pstream). The
+apt install pulls it in automatically; if you used the cake-openFOAM-lib
 mirror instead, it does not include MPI, so grab the bundled runtime from the
-same release and source it after `OF_BASHRC`:
+same release and source it after OF_BASHRC:
 
 ```bash
 curl -L -o mpi.tar.gz \
@@ -91,10 +91,10 @@ tar -xzf mpi.tar.gz -C /opt
 source /opt/mpi-openmpi-2412-linux-x86_64/activate.sh
 ```
 
-The `teno`/`teno6` schemes in `write_solver_setup` additionally need
-`libtenoScheme.so`, CakeCFD's own scheme library, in `FOAM_USER_LIBBIN`. Build
+The teno/teno6 schemes in write_solver_setup additionally need
+libtenoScheme.so, CakeCFD's own scheme library, in FOAM_USER_LIBBIN. Build
 it from [CakeCFD/cake-studio](https://github.com/CakeCFD/cake-studio)'s
-`./build.sh`, or download the prebuilt library (linux64GccDPInt32Opt,
+./build.sh, or download the prebuilt library (linux64GccDPInt32Opt,
 OpenFOAM 2412):
 
 ```bash
@@ -179,21 +179,21 @@ agent.chat("What is the lift-to-drag ratio?")
 
 | Tool | Function |
 |---|---|
-| `run_solver` | Runs a CakeFOAM solver, streams the log, returns convergence status |
-| `read_residuals` | Parses `log.*` and returns residual history per field |
-| `read_forces` | Reads `postProcessing/forces` and returns Fx, Fy, Fz |
-| `load_geometry` | Inspects a CAD file (STEP, BREP, STL) and returns bounding box and volume |
-| `query_turbulence_db` | Queries a turbulence database server for DNS inflow data |
-| `write_case_param` | Edits a key in any OpenFOAM dictionary through `foamDictionary` |
-| `setup_domain` | Computes domain extents from STL and writes blockMeshDict, snappyHexMeshDict and surfaceFeatureExtractDict |
-| `run_mesh_pipeline` | Runs surfaceFeatureExtract, blockMesh, snappyHexMesh and checkMesh in sequence |
-| `write_solver_setup` | Writes fvSchemes, fvSolution, controlDict and all 0/ boundary condition files |
-| `export_results` | Exports residuals.csv, forces.csv, report.md and results_summary.json |
-| `get_results_summary` | Reads results_summary.json for a compact results overview |
-| `check_mesh` | Runs checkMesh and returns non-orthogonality, skewness and aspect ratio |
-| `monitor_solver` | Polls a running solver log and returns convergence status |
-| `patch_inlet_bc` | Patches the inlet condition to timeVaryingMappedFixedValue |
-| `generate_report` | Generates report.md and citations.bib for the case |
+| run_solver | Runs a CakeFOAM solver, streams the log, returns convergence status |
+| read_residuals | Parses log.* and returns residual history per field |
+| read_forces | Reads postProcessing/forces and returns Fx, Fy, Fz |
+| load_geometry | Inspects a CAD file (STEP, BREP, STL) and returns bounding box and volume |
+| query_turbulence_db | Queries a turbulence database server for DNS inflow data |
+| write_case_param | Edits a key in any OpenFOAM dictionary through foamDictionary |
+| setup_domain | Computes domain extents from STL and writes blockMeshDict, snappyHexMeshDict and surfaceFeatureExtractDict |
+| run_mesh_pipeline | Runs surfaceFeatureExtract, blockMesh, snappyHexMesh and checkMesh in sequence |
+| write_solver_setup | Writes fvSchemes, fvSolution, controlDict and all 0/ boundary condition files |
+| export_results | Exports residuals.csv, forces.csv, report.md and results_summary.json |
+| get_results_summary | Reads results_summary.json for a compact results overview |
+| check_mesh | Runs checkMesh and returns non-orthogonality, skewness and aspect ratio |
+| monitor_solver | Polls a running solver log and returns convergence status |
+| patch_inlet_bc | Patches the inlet condition to timeVaryingMappedFixedValue |
+| generate_report | Generates report.md and citations.bib for the case |
 
 ## Architecture
 
@@ -206,7 +206,7 @@ cakecfd_ai/
 ```
 
 Claude reads the tool schemas, selects a tool, the Python side executes it, and
-the result is returned to Claude. This repeats until Claude returns `end_turn`.
+the result is returned to Claude. This repeats until Claude returns end_turn.
 
 ## Token usage
 
@@ -217,9 +217,9 @@ A single RANS run on claude-opus-4-5:
 | Step | Approximate tokens |
 |---|---|
 | Tool schemas and system prompt, repeated each turn | 6k x 10 turns = 60k |
-| `setup_mesh` and `check_mesh` output | 7k |
-| `monitor_solver` polling, 20 polls at 1.5k | 30k |
-| Solver log tail passed to `generate_report` | 10k to 50k |
+| setup_mesh and check_mesh output | 7k |
+| monitor_solver polling, 20 polls at 1.5k | 30k |
+| Solver log tail passed to generate_report | 10k to 50k |
 | Report and citations output | 5k |
 | Total per run | 110k to 200k tokens |
 
@@ -233,11 +233,11 @@ than read back into context:
 | Step | Approximate tokens |
 |---|---|
 | Tool schemas and system prompt | 6k x 4 turns = 24k |
-| `write_solver_setup` and `run_solver` log tail | 12k |
-| `generate_report` | 4k |
+| write_solver_setup and run_solver log tail | 12k |
+| generate_report | 4k |
 | Total | 35k to 40k tokens, about $0.50 on Opus |
 
-Push `report.md` to the user after `generate_report` rather than reading it back
+Push report.md to the user after generate_report rather than reading it back
 into context, to keep token usage down.
 
 For fast iteration during debugging, claude-haiku-4-5 is roughly 25 times
@@ -255,5 +255,5 @@ times out after two minutes.
 
 Within a Claude Code session Claude has full terminal access, can call every
 tool autonomously, and waits as long as the solver needs. The full pipeline of
-`setup_domain`, `run_mesh_pipeline`, `run_solver` and `export_results` runs end
+setup_domain, run_mesh_pipeline, run_solver and export_results runs end
 to end without manual intervention.

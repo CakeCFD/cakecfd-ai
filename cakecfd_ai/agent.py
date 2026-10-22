@@ -117,18 +117,25 @@ class CakeAgent:
         from rich.markdown import Markdown
 
         console = Console()
+        # If the API call fails mid-turn, roll history back to before this
+        # message so a retry doesn't send a half-finished turn.
+        history_len = len(self._history)
         self._history.append({"role": "user", "content": user_message})
 
         final_text = ""
 
         while True:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=self._history,
-            )
+            try:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=SYSTEM_PROMPT,
+                    tools=TOOLS,
+                    messages=self._history,
+                )
+            except Exception:
+                del self._history[history_len:]
+                raise
 
             assistant_content = []
             text_parts: list[str] = []
@@ -148,6 +155,13 @@ class CakeAgent:
                     console.print(Markdown(combined))
 
             self._history.append({"role": "assistant", "content": assistant_content})
+
+            if response.stop_reason == "max_tokens" and not tool_calls:
+                note = (f"[Output truncated: hit the max_tokens limit "
+                        f"({self.max_tokens}). Ask to continue, or raise max_tokens.]")
+                final_text = f"{final_text}\n\n{note}" if final_text else note
+                if stream:
+                    console.print(f"[bold yellow]{note}[/bold yellow]")
 
             if response.stop_reason == "end_turn" or not tool_calls:
                 break
