@@ -14,18 +14,8 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-CLI entry point:  cakecfd [--case CASE_DIR] [--model MODEL]
-
-Opens an interactive REPL where you type natural language commands
-and Claude drives Cake CFD tools in response.
-
-Direct tool mode (no API key needed):
-    cakecfd --tool TOOLNAME --case DIR [--args '{"key": "value"}']
-    cakecfd --list-tools
-"""
-
 import argparse
+import inspect
 import json
 import os
 import sys
@@ -77,9 +67,24 @@ def main():
                   file=sys.stderr)
             sys.exit(1)
 
-        kwargs = json.loads(args.args)
-        if args.case and "case_dir" not in kwargs:
+        try:
+            kwargs = json.loads(args.args)
+        except json.JSONDecodeError as exc:
+            print(json.dumps({"error": f"--args is not valid JSON: {exc}"}, indent=2))
+            sys.exit(1)
+        if not isinstance(kwargs, dict):
+            print(json.dumps({"error": "--args must be a JSON object"}, indent=2))
+            sys.exit(1)
+
+        sig = inspect.signature(fn)
+        if args.case and "case_dir" in sig.parameters and "case_dir" not in kwargs:
             kwargs["case_dir"] = args.case
+
+        try:
+            sig.bind(**kwargs)
+        except TypeError as exc:
+            print(json.dumps({"error": f"Bad arguments for {args.tool}: {exc}"}, indent=2))
+            sys.exit(1)
 
         result = fn(**kwargs)
         print(json.dumps(result, indent=2, default=str))
@@ -115,8 +120,6 @@ def main():
         if not user_input.strip():
             continue
 
-        # API failures (rate limits, overload, network) should not kill the
-        # REPL; print them and let the user retry.
         try:
             agent.chat(user_input)
         except anthropic.APIError as e:
