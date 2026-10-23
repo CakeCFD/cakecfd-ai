@@ -69,39 +69,41 @@ Minimum specifications for solver runs:
 | CakeCFD binary | Optional. Geometry tools use the CakeCFD C++ library. |
 
 Install OpenFOAM 2412 from [openfoam.com](https://www.openfoam.com/download).
-If that domain is not reachable from your environment, a GitHub-hosted mirror
-of the same release is available at
-[CakeCFD/cake-openFOAM-lib](https://github.com/CakeCFD/cake-openFOAM-lib). Either way,
-point OF_BASHRC at the resulting etc/bashrc if it is not at the default
-apt install path:
+On Ubuntu 24.04:
+
+```bash
+curl -s https://dl.openfoam.com/add-debian-repo.sh | sudo bash
+sudo apt-get update
+sudo apt-get install -y openfoam2412-default
+```
+
+If OpenFOAM is installed somewhere other than the default apt location, point
+OF_BASHRC at its etc/bashrc:
 
 ```bash
 export OF_BASHRC=/path/to/openfoam2412/etc/bashrc
 ```
 
-This build expects OpenMPI on PATH (even serial runs touch Pstream). The
-apt install pulls it in automatically; if you used the cake-openFOAM-lib
-mirror instead, it does not include MPI, so grab the bundled runtime from the
-same release and source it after OF_BASHRC:
+Where the apt packages cannot be used,
+[CakeCFD/cake-openFOAM-lib](https://github.com/CakeCFD/cake-openFOAM-lib)
+hosts a relocatable archive of the same release, plus an OpenMPI runtime for
+systems without one. It is an unofficial mirror maintained by the CakeCFD
+project and is not affiliated with OpenCFD. Its README explains how to verify
+the checksums before extracting anything.
+
+The teno and teno6 schemes in write_solver_setup also need libtenoScheme.so,
+CakeCFD's own scheme library, in FOAM_USER_LIBBIN. Build it from
+[CakeCFD/cake-teno-lib](https://github.com/CakeCFD/cake-teno-lib), or
+download the prebuilt library and check its SHA-256 before installing it:
 
 ```bash
-curl -L -o mpi.tar.gz \
-    https://github.com/CakeCFD/cake-openFOAM-lib/releases/download/v2412/mpi-openmpi-2412-linux-x86_64.tar.gz
-tar -xzf mpi.tar.gz -C /opt
-source /opt/mpi-openmpi-2412-linux-x86_64/activate.sh
+curl -LO https://github.com/CakeCFD/cake-teno-lib/releases/download/v0.1.2/libtenoScheme-v2412-x86_64.so
+echo "7a14f680d11a728b4ba96730e2242ce9592a6071c5058fd9cd073ed4116dd30b  libtenoScheme-v2412-x86_64.so" | sha256sum -c
+cp libtenoScheme-v2412-x86_64.so "$FOAM_USER_LIBBIN/libtenoScheme.so"
 ```
 
-The teno/teno6 schemes in write_solver_setup additionally need
-libtenoScheme.so, CakeCFD's own scheme library, in FOAM_USER_LIBBIN. Build
-it from [CakeCFD/cake-studio](https://github.com/CakeCFD/cake-studio)'s
-./build.sh, or download the prebuilt library (linux64GccDPInt32Opt,
-OpenFOAM 2412):
-
-```bash
-curl -L -o libtenoScheme.so \
-    https://github.com/CakeCFD/cakecfd-ai/releases/download/teno-2412/libtenoScheme-2412-linux-x86_64.so
-cp libtenoScheme.so "$FOAM_USER_LIBBIN/"
-```
+An aarch64 build is on the same release page, with its SHA-256 listed next to
+the download.
 
 ## Installation
 
