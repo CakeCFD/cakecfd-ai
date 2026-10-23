@@ -97,4 +97,4 @@ from .agent import CakeAgent
 from .tools import TOOLS
 
 __all__ = ["CakeAgent", "TOOLS"]
-__version__ = "0.1.9.2"
+__version__ = "0.1.9.3"
