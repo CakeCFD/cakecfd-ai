@@ -14,19 +14,6 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-CakeAgent: the main agentic loop.
-
-Usage:
-    from cakecfd_ai import CakeAgent
-
-    agent = CakeAgent(
-        case_dir="/path/to/your/openfoam/case",
-        api_key="sk-ant-...",   # or set ANTHROPIC_API_KEY
-    )
-    agent.chat("Run the solver for 200 iterations, then tell me the drag force.")
-"""
-
 import json
 import os
 from typing import Iterator
@@ -95,7 +82,6 @@ class CakeAgent:
         if fn is None:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
-        # Inject case_dir if the tool accepts it and it wasn't specified
         if "case_dir" in fn.__code__.co_varnames and "case_dir" not in inputs:
             if self.case_dir:
                 inputs = {"case_dir": self.case_dir, **inputs}
@@ -117,8 +103,7 @@ class CakeAgent:
         from rich.markdown import Markdown
 
         console = Console()
-        # If the API call fails mid-turn, roll history back to before this
-        # message so a retry doesn't send a half-finished turn.
+        # Roll history back on API failure so a retry never resends a half-finished turn.
         history_len = len(self._history)
         self._history.append({"role": "user", "content": user_message})
 

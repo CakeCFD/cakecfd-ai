@@ -14,15 +14,6 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Tool definitions exposed to Claude.
-
-Each entry follows the Anthropic tool-use schema:
-  { name, description, input_schema }
-
-Implementations live in tool_impl.py.
-"""
-
 TOOLS = [
     {
         "name": "run_solver",

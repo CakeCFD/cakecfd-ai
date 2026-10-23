@@ -14,27 +14,12 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Auto-generates two output files after every solver run:
-
-  report.md           : human-readable markdown (inputs, results, references)
-  results_summary.json: compact JSON for Claude's internal use (low token cost)
-
-Claude should point users to report.md rather than summarising everything inline.
-"""
-
 import json
 import re
 from datetime import date
 from pathlib import Path
 
 
-# Density-based (compressible) solvers use thermophysicalProperties + gamma/p/T
-# instead of transportProperties + nu, so their config table needs different
-# fields. rhoCentralFoam is additionally explicit/diagonal: it does not run a
-# linear solver per field, so it never prints "Solving for X, Final residual =
-# ..." lines and has no residual-based convergence criterion at all; the only
-# way to judge it is whether it ran to the requested end time.
 COMPRESSIBLE_SOLVERS = {
     "rhoSimpleFoam", "rhoPimpleFoam", "rhoCentralFoam",
     "buoyantSimpleFoam", "buoyantPimpleFoam",
@@ -94,10 +79,6 @@ CITATIONS = {
 }
 
 
-# readers
-
-# Matches "key value;" and dimensioned entries such as
-# "nu [0 2 -1 0 0 0 0] 1e-05;" or the older "nu nu [0 2 -1 0 0 0 0] 1e-05;".
 DIMENSIONED_ENTRY = r"\s+(?:(?:\w+\s+)?\[[^\]]*\]\s*)?([^\s;{}()\[\]]+)\s*;"
 
 
@@ -109,8 +90,6 @@ def _read_dict_value(path: Path, key: str) -> str:
     return m.group(1) if m else ""
 
 
-# Mesh/pre-processing utilities whose logs must never be mistaken for the
-# solver log when picking one by name or modification time.
 _UTILITY_LOGS = {
     "log.checkMesh", "log.blockMesh", "log.snappyHexMesh",
     "log.surfaceFeatureExtract", "log.surfaceFeatures", "log.decomposePar",
@@ -302,9 +281,6 @@ def _detect_citations(case: Path) -> list[str]:
         if "jhtdb" in bib.lower() or "Li2008" in bib:
             keys.append("jhtdb")
 
-    # A case often carries both momentumTransport and turbulenceProperties, and
-    # the loop above appends once per file, so the turbulence key can be added
-    # twice. Deduplicate while preserving first-seen order.
     return list(dict.fromkeys(keys))
 
 
@@ -349,8 +325,6 @@ def generate(case_dir: str, solver: str = "simpleFoam",
     else:
         nu_str   = _read_dict_value(case / "constant" / "transportProperties", "nu") or \
                    _read_dict_value(case / "constant" / "physicalProperties", "nu") or "unknown"
-        # momentumTransport uses "model"; turbulenceProperties (what OF2412
-        # ESI actually reads) uses "RASModel" / "LESModel".
         turb_model = ""
         for _f, _keys in (("momentumTransport", ("model", "RASModel", "LESModel")),
                           ("turbulenceProperties", ("RASModel", "LESModel", "model"))):
@@ -367,8 +341,6 @@ def generate(case_dir: str, solver: str = "simpleFoam",
         U = _read_inlet_velocity(case)
         U_mag = (U[0]**2 + U[1]**2 + U[2]**2) ** 0.5
 
-        # Re needs a length scale. Without one, U/nu is only the unit
-        # Reynolds number (1/m), so it is reported under that name instead.
         L_ref, L_src = _reference_length(case)
         re_val = re_unit = None
         try:
@@ -447,7 +419,6 @@ def _write_report(case: Path, s: dict):
         f"",
     ]
 
-    # Config table
     cells_str = f"{cfg['mesh_cells']:,}" if cfg['mesh_cells'] else 'N/A'
     lines += ["## Configuration", "", "| Parameter | Value |", "|-----------|-------|"]
     if cfg["compressible"]:
@@ -481,7 +452,6 @@ def _write_report(case: Path, s: dict):
         ]
     lines.append("")
 
-    # Residuals table
     if s["diagonal"]:
         lines += [
             "## Convergence",
@@ -504,7 +474,6 @@ def _write_report(case: Path, s: dict):
             lines.append(f"| {field} | {info['final']:.2e} | {conv} |")
         lines.append("")
 
-    # Results
     if s["forces"]:
         lines += [
             "## Forces",
@@ -516,7 +485,6 @@ def _write_report(case: Path, s: dict):
             lines.append(f"| {comp} | {val:.6g} |")
         lines.append("")
 
-    # Time steps
     if s["time_steps"]:
         lines += [
             "## Result Time Steps",
@@ -525,7 +493,6 @@ def _write_report(case: Path, s: dict):
             "",
         ]
 
-    # References
     if s["citations"]:
         lines += ["## References", ""]
         for i, key in enumerate(s["citations"], 1):

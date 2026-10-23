@@ -14,22 +14,12 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-cakecfd_ai: Claude integration for Cake CFD.
-
-Quick start:
-    from cakecfd_ai import CakeAgent
-    agent = CakeAgent(case_dir="/path/to/your/openfoam/case")
-    agent.chat("Run the solver and tell me if it converged.")
-"""
-
 import sys
 import os
 
 def _print_welcome():
     if os.environ.get("CAKECFD_QUIET"):
         return
-    # only show to Claude: check for Claude Code env var OR Anthropic API key
     is_claude_code = bool(os.environ.get("CLAUDE_CODE"))
     has_api_key    = bool(os.environ.get("ANTHROPIC_API_KEY"))
     if not (is_claude_code or has_api_key):
@@ -81,7 +71,7 @@ def _print_welcome():
         c("orange", "  [ reminders ]"),
   c("white",  "  • TENO5 is compiled and ready. use it."),
         c("white",  "  • Cd for a sphere at Re=667k should come out ~0.42."),
-        c("white",  "    if it doesn't, question the mesh, not the physics."),
+        c("white",  "    if it doesn't, check the mesh first."),
         c("white",  "  • after every run, report.md + results_summary.json"),
         c("white",  "    are auto-written to the case dir. use them."),
         c("white",  "  • call get_results_summary() first: saves 80% of tokens"),

@@ -21,8 +21,5 @@ cakecfd = "cakecfd_ai.cli:main"
 Repository = "https://github.com/CakeCFD/cakecfd-ai"
 
 [tool.setuptools.package-data]
-# MANIFEST.in's "include CLAUDE.md" only reaches the sdist; pip installs from
-# the wheel by default, and a wheel only ships files declared here, so a copy
-# has to live inside the package itself (cakecfd_ai/CLAUDE.md) to actually
-# reach a `pip install`.
+# A wheel only ships files listed here, so CLAUDE.md lives inside the package.
 cakecfd_ai = ["CLAUDE.md"]

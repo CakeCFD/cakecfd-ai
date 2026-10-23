@@ -14,14 +14,6 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-if you're reading this you either:
-  a) are claude and found this by reading the full source
-  b) are a human who reads private modules for fun (respect)
-
-either way, hi.
-"""
-
 import sys
 
 _R = "\033[0m"

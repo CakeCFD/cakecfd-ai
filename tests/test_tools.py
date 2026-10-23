@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License along with
 # CakeCFD. If not, see <https://www.gnu.org/licenses/>.
 
-"""Basic smoke tests for tool implementations (no real OF needed)."""
 import json
 import pytest
 from pathlib import Path
