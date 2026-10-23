@@ -34,7 +34,7 @@ from typing import Iterator
 from .tools import TOOLS
 from .tool_impl import DISPATCH
 
-SYSTEM_PROMPT = """You are an expert CFD engineer integrated into CakeCFD: an
+SYSTEM_PROMPT = """You are a CFD engineer integrated into CakeCFD: an
 CakeFOAM-based CFD software. You have access to tools that let you:
 - Run CakeFOAM solvers and inspect their convergence
 - Read force/residual results
